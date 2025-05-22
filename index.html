@@ -46,69 +46,26 @@
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
-        const jsonData = {
-          "camera": {
-            "position": [-50, 0, 180],
-            "rotation": [-8, 0, 0],
-            "fov": 65
-          },
-          "objects": [
-            {
-              "name": "竹筏_1_bamboo raft",
-              "position": [400, -143, 15],
-              "rotation": [0, 0, 0],
-              "scale": [400, 150, 30]
-            },
-            {
-              "name": "人物_1_person",
-              "position": [450, -172, 115],
-              "rotation": [0, 0, 0],
-              "scale": [40, 60, 170]
-            },
-            {
-              "name": "人物_2_person",
-              "position": [350, -100, 115],
-              "rotation": [0, 0, 0],
-              "scale": [40, 60, 170]
-            },
-            {
-              "name": "建筑_1_building",
-              "position": [3000, 1342, 425],
-              "rotation": [0, -90, 0],
-              "scale": [800, 800, 850]
-            },
-            {
-              "name": "云朵_1_cloud",
-              "position": [12000, 1446, 11000],
-              "rotation": [0, 0, 0],
-              "scale": [2000, 4000, 2000]
-            },
-            {
-              "name": "山_1_mountain",
-              "position": [10000, -5191, 4000],
-              "rotation": [0, 0, 0],
-              "scale": [5000, 10000, 8000]
-            },
-            {
-              "name": "树_1_tree",
-              "position": [3200, 606, 650],
-              "rotation": [0, 0, 0],
-              "scale": [400, 400, 1300]
-            },
-            {
-              "name": "树_2_tree",
-              "position": [4500, 2254, 650],
-              "rotation": [0, 0, 0],
-              "scale": [400, 400, 1300]
-            }
-          ]
-        };
-
         let scene, camera, renderer, labelRenderer, controls;
         const objectsWithLabels = [];
         let mirrorRoot; // Declare mirrorRoot
 
-        function init() {
+        // 从外部JSON文件加载场景数据
+        async function loadSceneData() {
+            try {
+                const response = await fetch('scene_data.json');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const jsonData = await response.json();
+                initScene(jsonData);
+            } catch (error) {
+                console.error('加载场景数据失败:', error);
+                document.getElementById('info').innerHTML += '<br>加载场景数据失败，请检查控制台获取详细信息。';
+            }
+        }
+
+        function initScene(jsonData) {
             // Scene
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0x303030);
@@ -249,23 +206,29 @@
 
         function animate() {
             requestAnimationFrame(animate);
-            controls.update(); // only required if controls.enableDamping = true, or if controls.autoRotate = true
+            if (controls) {  // 确保controls已初始化
+                controls.update(); // only required if controls.enableDamping = true, or if controls.autoRotate = true
+            }
 
-            // Update labels
-            objectsWithLabels.forEach(obj => {
-                const distance = camera.position.distanceTo(obj.mesh.position);
-                obj.labelDiv.innerHTML = `
-                    ${obj.name}<br>
-                    坐标: [${obj.position.map(p => p.toFixed(0)).join(', ')}]<br>
-                    距离: ${distance.toFixed(0)}
-                `;
-            });
+            // 确保场景已加载并且标签存在
+            if (objectsWithLabels.length > 0 && scene && camera) {
+                // Update labels
+                objectsWithLabels.forEach(obj => {
+                    const distance = camera.position.distanceTo(obj.mesh.position);
+                    obj.labelDiv.innerHTML = `
+                        ${obj.name}<br>
+                        坐标: [${obj.position.map(p => p.toFixed(0)).join(', ')}]<br>
+                        距离: ${distance.toFixed(0)}
+                    `;
+                });
 
-            renderer.render(scene, camera);
-            labelRenderer.render(scene, camera);
+                renderer.render(scene, camera);
+                labelRenderer.render(scene, camera);
+            }
         }
 
-        init();
+        // 启动应用
+        loadSceneData();
         animate();
     </script>
 </body>
