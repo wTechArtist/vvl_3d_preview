@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>3D 对象预览</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background-color: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+        .label {
+            color: white;
+            font-family: Arial, sans-serif;
+            padding: 5px 8px;
+            background: rgba(0, 0, 0, 0.75);
+            border-radius: 4px;
+            font-size: 10px;
+            white-space: nowrap;
+            pointer-events: none; /* Allow clicking through labels to controls */
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        交互: 左键拖动 - 旋转视角 | 鼠标滚轮 - 缩放 | 右键拖动 - 平移
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+        const jsonData = {
+          "camera": {
+            "position": [-50, 0, 180],
+            "rotation": [-8, 0, 0],
+            "fov": 65
+          },
+          "objects": [
+            {
+              "name": "竹筏_1_bamboo raft",
+              "position": [400, -143, 15],
+              "rotation": [0, 0, 0],
+              "scale": [400, 150, 30]
+            },
+            {
+              "name": "人物_1_person",
+              "position": [450, -172, 115],
+              "rotation": [0, 0, 0],
+              "scale": [40, 60, 170]
+            },
+            {
+              "name": "人物_2_person",
+              "position": [350, -100, 115],
+              "rotation": [0, 0, 0],
+              "scale": [40, 60, 170]
+            },
+            {
+              "name": "建筑_1_building",
+              "position": [3000, 1342, 425],
+              "rotation": [0, -90, 0],
+              "scale": [800, 800, 850]
+            },
+            {
+              "name": "云朵_1_cloud",
+              "position": [12000, 1446, 11000],
+              "rotation": [0, 0, 0],
+              "scale": [2000, 4000, 2000]
+            },
+            {
+              "name": "山_1_mountain",
+              "position": [10000, -5191, 4000],
+              "rotation": [0, 0, 0],
+              "scale": [5000, 10000, 8000]
+            },
+            {
+              "name": "树_1_tree",
+              "position": [3200, 606, 650],
+              "rotation": [0, 0, 0],
+              "scale": [400, 400, 1300]
+            },
+            {
+              "name": "树_2_tree",
+              "position": [4500, 2254, 650],
+              "rotation": [0, 0, 0],
+              "scale": [400, 400, 1300]
+            }
+          ]
+        };
+
+        let scene, camera, renderer, labelRenderer, controls;
+        const objectsWithLabels = [];
+        let mirrorRoot; // Declare mirrorRoot
+
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x303030);
+
+            // Create a root group for mirroring
+            mirrorRoot = new THREE.Group();
+            mirrorRoot.scale.y = -1; // Mirror along the Y-axis
+            scene.add(mirrorRoot);
+
+            // Camera
+            const camData = jsonData.camera;
+            camera = new THREE.PerspectiveCamera(camData.fov || 75, window.innerWidth / window.innerHeight, 0.1, 500000);
+            
+            // Set Z as the up direction for the camera
+            camera.up.set(0, 0, 1);
+
+            camera.position.set(camData.position[0], camData.position[1], camData.position[2]);
+            // Convert degrees to radians for rotation
+            camera.rotation.set(
+                THREE.MathUtils.degToRad(camData.rotation[0]),
+                THREE.MathUtils.degToRad(camData.rotation[1]),
+                THREE.MathUtils.degToRad(camData.rotation[2])
+            );
+            
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // Label Renderer
+            labelRenderer = new CSS2DRenderer();
+            labelRenderer.setSize(window.innerWidth, window.innerHeight);
+            labelRenderer.domElement.style.position = 'absolute';
+            labelRenderer.domElement.style.top = '0px';
+            labelRenderer.domElement.style.pointerEvents = 'none'; // Make sure it doesn't interfere with OrbitControls
+            document.body.appendChild(labelRenderer.domElement);
+
+            // Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.target.set(camera.position.x + 100, camera.position.y, camera.position.z); // Look slightly ahead initially
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.screenSpacePanning = true; // For right-click panning
+            controls.minDistance = 10;
+            controls.maxDistance = 400000;
+
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(1, 1, 1).normalize();
+            scene.add(directionalLight);
+
+            // Grid Helper (optional, for visual reference of the ground plane)
+            const gridHelper = new THREE.GridHelper(200000, 200, 0x888888, 0x444444); // Large grid
+            // scene.add(gridHelper); // Can be very large, uncomment if needed and adjust size/divisions
+
+            // Coordinate Axes Helper
+            const axesHelper = new THREE.AxesHelper(5000); // Length of axes
+            // scene.add(axesHelper); // REMOVE: Will be added to mirrorRoot
+            mirrorRoot.add(axesHelper); // ADD: Add AxesHelper to the mirrorRoot group
+
+            // Add labels to AxesHelper
+            const axesLabels = ['X', 'Y', 'Z'];
+            const axesColors = [0xff0000, 0x00ff00, 0x0000ff]; // Red, Green, Blue
+            const labelOffset = 500; // Offset labels slightly beyond the end of the axes
+
+            axesLabels.forEach((axis, index) => {
+                const labelDiv = document.createElement('div');
+                labelDiv.className = 'label'; // Reuse existing label style or create a new one
+                labelDiv.textContent = axis;
+                labelDiv.style.color = `#${new THREE.Color(axesColors[index]).getHexString()}`;
+                labelDiv.style.fontSize = '30px'; // Larger font for axis labels
+                labelDiv.style.fontWeight = 'bold';
+                labelDiv.style.textShadow = '1px 1px 2px black';
+
+
+                const label = new CSS2DObject(labelDiv);
+                const position = [0, 0, 0];
+                position[index] = 5000 + labelOffset; // Position at the end of the respective axis + offset
+                label.position.set(position[0], position[1], position[2]);
+                
+                axesHelper.add(label); // Add labels as children of axesHelper so they share its coordinate space
+            });
+
+
+            // Create objects
+            jsonData.objects.forEach(objData => {
+                const geometry = new THREE.BoxGeometry(objData.scale[0], objData.scale[1], objData.scale[2]);
+                // Give each box a random, somewhat distinct color
+                const material = new THREE.MeshStandardMaterial({ 
+                    color: new THREE.Color(Math.random() * 0xffffff),
+                    roughness: 0.7,
+                    metalness: 0.2
+                });
+                const mesh = new THREE.Mesh(geometry, material);
+
+                mesh.position.set(objData.position[0], objData.position[1], objData.position[2]);
+                mesh.rotation.set(
+                    THREE.MathUtils.degToRad(objData.rotation[0]),
+                    THREE.MathUtils.degToRad(objData.rotation[1]),
+                    THREE.MathUtils.degToRad(objData.rotation[2])
+                );
+                // scene.add(mesh); // REMOVE: Will be added to mirrorRoot
+                mirrorRoot.add(mesh); // ADD: Add mesh to the mirrorRoot group
+
+                // Create Label
+                const labelDiv = document.createElement('div');
+                labelDiv.className = 'label';
+                
+                const label = new CSS2DObject(labelDiv);
+                // Position label slightly above the center of the box's top face
+                label.position.set(0, objData.scale[1] / 2 + 20, 0); // Adjust y offset as needed based on scale
+                mesh.add(label); // Add label as a child of the mesh
+
+                objectsWithLabels.push({ mesh, labelDiv, name: objData.name, position: objData.position });
+            });
+
+            // Window resize listener
+            window.addEventListener('resize', onWindowResize, false);
+
+            // Set initial control target to the first object if available, or near camera
+            if (jsonData.objects.length > 0) {
+                 const firstObjectPos = jsonData.objects[0].position;
+                 controls.target.set(firstObjectPos[0], firstObjectPos[1], firstObjectPos[2]);
+            }
+            camera.lookAt(controls.target); // Ensure camera looks at the target after setting its rotation
+            controls.update();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            labelRenderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update(); // only required if controls.enableDamping = true, or if controls.autoRotate = true
+
+            // Update labels
+            objectsWithLabels.forEach(obj => {
+                const distance = camera.position.distanceTo(obj.mesh.position);
+                obj.labelDiv.innerHTML = `
+                    ${obj.name}<br>
+                    坐标: [${obj.position.map(p => p.toFixed(0)).join(', ')}]<br>
+                    距离: ${distance.toFixed(0)}
+                `;
+            });
+
+            renderer.render(scene, camera);
+            labelRenderer.render(scene, camera);
+        }
+
+        init();
+        animate();
+    </script>
+</body>
+</html> 
