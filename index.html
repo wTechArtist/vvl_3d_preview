@@ -42,7 +42,7 @@
             background-color: rgba(50,50,50,0.9);
         }
         /* 单位倍率控制面板 */
-        #unitScaleControl {
+        #unitSettings {
             position: absolute;
             top: 50px;
             right: 10px;
@@ -53,7 +53,7 @@
             border-radius: 5px;
             font-size: 12px;
         }
-        #unitScaleControl input {
+        #unitSettings input, #unitSettings select {
             width: 60px;
             margin: 0 5px;
             background-color: rgba(30,30,30,0.9);
@@ -126,13 +126,22 @@
 </head>
 <body>
     <div id="info">
-        交互: 左键拖动 - 旋转视角 | 鼠标滚轮 - 缩放 | 右键拖动 - 平移
+        交互: 左键拖动 - 旋转视角 | 鼠标滚轮 - 缩放 | 右键拖动 - 平移<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)
     </div>
     
     <button id="toggleLabels">隐藏标签</button>
-    <div id="unitScaleControl">
-        单位倍率: <input id="unitScaleInput" type="number" value="100" step="10">
-        <button id="applyUnitScale">应用</button>
+    <div id="unitSettings">
+        <div style="margin-bottom:4px;">position位置倍率(cm): <input id="posUnitInput" type="number" value="1" step="1" style="width:60px;"></div>
+        <div style="margin-bottom:4px;">rotation旋转单位:
+            <select id="rotUnitSelect">
+                <option value="deg" selected>度</option>
+                <option value="rad">弧度</option>
+            </select>
+        </div>
+        <div style="margin-bottom:4px;">scale尺寸倍率(m): <input id="scaleUnitInput" type="number" value="1" step="0.1" style="width:60px;"></div>
+        <div style="margin-bottom:4px;"><label><input type="checkbox" id="randomColorCheckbox" checked> 随机颜色</label></div>
+        <div style="margin-bottom:4px;"><input type="color" id="colorPicker" value="#ffffff" style="width:60px;" disabled></div>
+        <button id="applyUnitSettings">应用</button>
     </div>
     
     <!-- JSON编辑器面板 -->

@@ -11,8 +11,16 @@ const objectsWithLabels = [];
 let labelsVisible = true;
 let animationFrameId = null;
 
-// 单位转换比例（UE单位(厘米) -> Three.js 单位）。默认 100：即 UE 的 1 单位(1cm) 在 Three.js 中渲染为 100 单位长度。
-let unitScaleFactor = 100;
+// --- 单位系统设置 ---
+// 位置倍率: UE 单位(厘米) × posUnitFactor → Three.js 单位
+let posUnitFactor = 1;
+// 尺寸倍率: UE Scale(米) × scaleUnitFactor → Three.js 单位
+let scaleUnitFactor = 100;
+// 旋转单位: 'deg' 或 'rad'
+let rotationUnit = 'deg';
+// --- 颜色设置 ---
+let useRandomColor = true;
+let customColor = 0xffffff;
 
 /******************************
  * 默认数据（作为后备）
@@ -134,8 +142,9 @@ function initScene(data) {
     const camData = data.camera || defaultData.camera;
     camera = new THREE.PerspectiveCamera(camData.fov || 75, window.innerWidth / window.innerHeight, 0.1, 1e6);
     camera.up.set(0, 0, 1);
-    camera.position.set(...camData.position);
-    camera.rotation.set(...camData.rotation.map(r => THREE.MathUtils.degToRad(r)));
+    camera.position.set(...camData.position.map(p=> p * posUnitFactor));
+    const camRotVec = rotationUnit === 'deg' ? camData.rotation.map(r=>THREE.MathUtils.degToRad(r)) : camData.rotation;
+    camera.rotation.set(...camRotVec);
 
     renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -154,7 +163,7 @@ function initScene(data) {
     controls.screenSpacePanning = true;
     if(data.objects && data.objects.length > 0){
         const firstObjPos = data.objects[0].position;
-        controls.target.set(firstObjPos[0], firstObjPos[1], firstObjPos[2]);
+        controls.target.set(firstObjPos[0] * posUnitFactor, firstObjPos[1] * posUnitFactor, firstObjPos[2] * posUnitFactor);
     } else {
         controls.target.set(0,0,0); // Default target if no objects
     }
@@ -205,12 +214,15 @@ function createObject(objData) {
     const rotation = objData.rotation || [0,0,0];
 
     // 将 UE 中的尺寸(单位: cm 或 ScaleFactor) 转换为 Three.js 长度
-    const geoSize = scale.map(s => s * unitScaleFactor);
+    const geoSize = scale.map(s => s * scaleUnitFactor);
     const geo = new THREE.BoxGeometry(...geoSize);
-    const mat = new THREE.MeshStandardMaterial({ color: Math.random() * 0xffffff, roughness: 0.7 });
+    const colorValue = useRandomColor ? Math.random() * 0xffffff : customColor;
+    const mat = new THREE.MeshStandardMaterial({ color: colorValue, roughness: 0.7 });
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(...position);
-    mesh.rotation.set(...rotation.map(r => THREE.MathUtils.degToRad(r)));
+    const posVec = position.map(p => p * posUnitFactor);
+    mesh.position.set(...posVec);
+    const rotVec = rotationUnit === 'deg' ? rotation.map(r => THREE.MathUtils.degToRad(r)) : rotation;
+    mesh.rotation.set(...rotVec);
     mirrorRoot.add(mesh);
 
     const labelDiv = document.createElement('div');
@@ -331,8 +343,9 @@ function updateLabel(o) {
     const dist = camera.position.distanceTo(o.mesh.position).toFixed(0);
     o.labelDiv.innerHTML = 
         `${o.data.name || 'N/A'}<br>
-        坐标: [${(o.data.position || [0,0,0]).join(', ')}]<br>
-        缩放: [${(o.data.scale || [0,0,0]).join(', ')}]<br>
+        position位置(cm): [${(o.data.position || [0,0,0]).join(', ')}]<br>
+        rotation旋转(Pitch, Yaw, Roll): [${(o.data.rotation || [0,0,0]).join(', ')}] ${rotationUnit === 'deg' ? '°' : 'rad'}<br>
+        scale尺寸(m): [${(o.data.scale || [0,0,0]).join(', ')}]<br>
         距离: ${dist}`;
   } catch(e){
       console.warn("Error updating label for object:", o.data.name, e);
@@ -373,30 +386,58 @@ function initUI(initialData) {
   const textarea = document.getElementById('jsonTextarea');
   const applyJsonButton = document.getElementById('applyJsonButton');
 
-  // --- 单位倍率控制 ---
-  const unitScaleInput = document.getElementById('unitScaleInput');
-  const applyUnitScaleButton = document.getElementById('applyUnitScale');
-  if(unitScaleInput){
-      unitScaleInput.value = unitScaleFactor;
+  // --- 单位设置控制 ---
+  const posUnitInput = document.getElementById('posUnitInput');
+  const scaleUnitInput = document.getElementById('scaleUnitInput');
+  const rotUnitSelect = document.getElementById('rotUnitSelect');
+  const applyUnitSettings = document.getElementById('applyUnitSettings');
+  const randomColorCheckbox = document.getElementById('randomColorCheckbox');
+  const colorPicker = document.getElementById('colorPicker');
+
+  if(posUnitInput) posUnitInput.value = posUnitFactor;
+  if(scaleUnitInput) scaleUnitInput.value = (scaleUnitFactor/100).toFixed(2).replace(/\.00$/, '');
+  if(rotUnitSelect) rotUnitSelect.value = rotationUnit;
+  if(randomColorCheckbox) randomColorCheckbox.checked = useRandomColor;
+  if(colorPicker){
+      const colHex = '#' + customColor.toString(16).padStart(6,'0');
+      colorPicker.value = colHex;
+      colorPicker.disabled = useRandomColor;
+      if(randomColorCheckbox){
+          randomColorCheckbox.onchange = () => {
+              colorPicker.disabled = randomColorCheckbox.checked;
+          };
+      }
   }
-  if(applyUnitScaleButton && unitScaleInput){
-      applyUnitScaleButton.onclick = () => {
-          const newVal = parseFloat(unitScaleInput.value);
-          if(!isNaN(newVal) && newVal > 0){
-              unitScaleFactor = newVal;
-              console.log(`Unit scale factor updated to: ${unitScaleFactor}. Rebuilding scene...`);
+
+  if(applyUnitSettings && posUnitInput && scaleUnitInput && rotUnitSelect){
+      applyUnitSettings.onclick = () => {
+          const newPosFactor = parseFloat(posUnitInput.value);
+          const newScaleInput = parseFloat(scaleUnitInput.value);
+          const newScaleFactor = newScaleInput * 100;
+          const newRotUnit = rotUnitSelect.value;
+          const newUseRandom = randomColorCheckbox ? randomColorCheckbox.checked : true;
+          const newCustomColor = colorPicker ? parseInt(colorPicker.value.replace('#',''),16) : customColor;
+          if(!isNaN(newPosFactor) && newPosFactor>0 && !isNaN(newScaleFactor) && newScaleFactor>0){
+              posUnitFactor = newPosFactor;
+              scaleUnitFactor = newScaleFactor;
+              rotationUnit = newRotUnit;
+              useRandomColor = newUseRandom;
+              customColor = newCustomColor;
+              if(randomColorCheckbox) randomColorCheckbox.checked = useRandomColor;
+              if(colorPicker) colorPicker.disabled = useRandomColor;
+              console.log(`Unit settings updated. position×${posUnitFactor}, scaleInput=${newScaleInput} (factor×${scaleUnitFactor}), rotUnit=${rotationUnit}`);
               let currentData;
               try {
                   currentData = JSON.parse(document.getElementById('jsonTextarea').value);
               } catch(e){
-                  console.warn("Failed to parse JSON textarea when applying unit scale:", e);
+                  console.warn('Failed to parse JSON textarea when applying unit settings:', e);
                   currentData = defaultData;
               }
               initScene(currentData);
               initUI(currentData);
               animate();
           } else {
-              alert('单位倍率必须为正数');
+              alert('倍率必须为正数');
           }
       };
   }
