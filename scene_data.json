@@ -1,57 +1,33 @@
 {
   "camera": {
-    "position": [-50, 0, 180],
-    "rotation": [-8, 0, 0],
-    "fov": 65
+    "position": [50, 0, 0],
+    "rotation": [10, 0, 0],   
+    "fov": 65                 
   },
   "objects": [
     {
-      "name": "竹筏_1_bamboo raft",
-      "position": [400, -143, 15],
+      "name": "X方向墙",
+      "position": [0, -500, 440],
       "rotation": [0, 0, 0],
-      "scale": [400, 150, 30]
+      "scale": [10, 0.4, 8.5]
     },
     {
-      "name": "人物_1_person",
-      "position": [450, -172, 115],
-      "rotation": [0, 0, 0],
-      "scale": [40, 60, 170]
+      "name": "Y方向墙",
+      "position": [500, 0, 440], 
+      "rotation": [0, 0, 0],  
+      "scale": [0.4,10,  8.5]    
     },
     {
-      "name": "人物_2_person",
-      "position": [350, -100, 115],
-      "rotation": [0, 0, 0],
-      "scale": [40, 60, 170]
+      "name": "地板",
+      "position": [0, 0, 0], 
+      "rotation": [0, 0, 0],  
+      "scale": [10,10,  0.3]    
     },
     {
-      "name": "建筑_1_building",
-      "position": [3000, 1342, 425],
-      "rotation": [0, -90, 0],
-      "scale": [800, 800, 850]
-    },
-    {
-      "name": "云朵_1_cloud",
-      "position": [12000, 1446, 11000],
-      "rotation": [0, 0, 0],
-      "scale": [2000, 4000, 2000]
-    },
-    {
-      "name": "山_1_mountain",
-      "position": [10000, -5191, 4000],
-      "rotation": [0, 0, 0],
-      "scale": [5000, 10000, 8000]
-    },
-    {
-      "name": "树_1_tree",
-      "position": [3200, 606, 650],
-      "rotation": [0, 0, 0],
-      "scale": [400, 400, 1300]
-    },
-    {
-      "name": "树_2_tree",
-      "position": [4500, 2254, 650],
-      "rotation": [0, 0, 0],
-      "scale": [400, 400, 1300]
+      "name": "天花板",
+      "position": [0, 0, 850], 
+      "rotation": [0, 0, 0],  
+      "scale": [10,10,  0.3]    
     }
   ]
-} 
+}

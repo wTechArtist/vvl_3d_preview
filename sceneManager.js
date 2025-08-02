@@ -11,6 +11,9 @@ const objectsWithLabels = [];
 let labelsVisible = true;
 let animationFrameId = null;
 
+// 单位转换比例（UE单位(厘米) -> Three.js 单位）。默认 100：即 UE 的 1 单位(1cm) 在 Three.js 中渲染为 100 单位长度。
+let unitScaleFactor = 100;
+
 /******************************
  * 默认数据（作为后备）
  ******************************/
@@ -201,7 +204,9 @@ function createObject(objData) {
     const position = objData.position || [0,0,0];
     const rotation = objData.rotation || [0,0,0];
 
-    const geo = new THREE.BoxGeometry(...scale);
+    // 将 UE 中的尺寸(单位: cm 或 ScaleFactor) 转换为 Three.js 长度
+    const geoSize = scale.map(s => s * unitScaleFactor);
+    const geo = new THREE.BoxGeometry(...geoSize);
     const mat = new THREE.MeshStandardMaterial({ color: Math.random() * 0xffffff, roughness: 0.7 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(...position);
@@ -211,7 +216,7 @@ function createObject(objData) {
     const labelDiv = document.createElement('div');
     labelDiv.className = 'label';
     const labelObj = new CSS2DObject(labelDiv);
-    labelObj.position.set(0, scale[1] / 2 + 20, 0); 
+    labelObj.position.set(0, geoSize[1] / 2 + 20, 0); 
     mesh.add(labelObj);
 
     objectsWithLabels.push({ mesh, labelObj, labelDiv, data: objData });
@@ -367,6 +372,34 @@ function initUI(initialData) {
   const icon = document.getElementById('expandCollapseIcon');
   const textarea = document.getElementById('jsonTextarea');
   const applyJsonButton = document.getElementById('applyJsonButton');
+
+  // --- 单位倍率控制 ---
+  const unitScaleInput = document.getElementById('unitScaleInput');
+  const applyUnitScaleButton = document.getElementById('applyUnitScale');
+  if(unitScaleInput){
+      unitScaleInput.value = unitScaleFactor;
+  }
+  if(applyUnitScaleButton && unitScaleInput){
+      applyUnitScaleButton.onclick = () => {
+          const newVal = parseFloat(unitScaleInput.value);
+          if(!isNaN(newVal) && newVal > 0){
+              unitScaleFactor = newVal;
+              console.log(`Unit scale factor updated to: ${unitScaleFactor}. Rebuilding scene...`);
+              let currentData;
+              try {
+                  currentData = JSON.parse(document.getElementById('jsonTextarea').value);
+              } catch(e){
+                  console.warn("Failed to parse JSON textarea when applying unit scale:", e);
+                  currentData = defaultData;
+              }
+              initScene(currentData);
+              initUI(currentData);
+              animate();
+          } else {
+              alert('单位倍率必须为正数');
+          }
+      };
+  }
 
   if(editor && icon && textarea && applyJsonButton){
       editor.onclick = e => {

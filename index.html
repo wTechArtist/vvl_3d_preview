@@ -41,6 +41,27 @@
         #toggleLabels:hover {
             background-color: rgba(50,50,50,0.9);
         }
+        /* 单位倍率控制面板 */
+        #unitScaleControl {
+            position: absolute;
+            top: 50px;
+            right: 10px;
+            padding: 8px 10px;
+            background-color: rgba(0,0,0,0.7);
+            color: white;
+            border: 1px solid #666;
+            border-radius: 5px;
+            font-size: 12px;
+        }
+        #unitScaleControl input {
+            width: 60px;
+            margin: 0 5px;
+            background-color: rgba(30,30,30,0.9);
+            color: #f8f8f8;
+            border: 1px solid #555;
+            border-radius: 4px;
+            padding: 2px 4px;
+        }
         
         /* JSON编辑器面板样式 */
         #jsonEditor {
@@ -109,6 +130,10 @@
     </div>
     
     <button id="toggleLabels">隐藏标签</button>
+    <div id="unitScaleControl">
+        单位倍率: <input id="unitScaleInput" type="number" value="100" step="10">
+        <button id="applyUnitScale">应用</button>
+    </div>
     
     <!-- JSON编辑器面板 -->
     <div id="jsonEditor">
