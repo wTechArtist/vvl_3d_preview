@@ -144,7 +144,7 @@
         交互: 左键拖动 - 旋转视角 | 鼠标滚轮 - 缩放 | 右键拖动 - 平移<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)
     </div>
     
-    <button id="toggleLabels">隐藏标签</button>
+    
     <div id="unitSettings">
         <div style="margin-bottom:4px;">position位置倍率(cm): <input id="posUnitInput" type="number" value="1" step="1" style="width:60px;"></div>
         <div style="margin-bottom:4px;">rotation旋转单位:
@@ -159,6 +159,7 @@
         <div style="margin-bottom:4px; display:flex; align-items:flex-start;">
             <span style="font-size:12px;">标签内容:</span>
             <div id="labelOptions">
+                <label class="labelOption"><input type="checkbox" id="labelNameCb" checked>name</label>
                 <label class="labelOption"><input type="checkbox" id="labelPosCb">position</label>
                 <label class="labelOption"><input type="checkbox" id="labelRotCb">rotation</label>
                 <label class="labelOption"><input type="checkbox" id="labelScaleCb">scale</label>

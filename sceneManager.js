@@ -409,6 +409,7 @@ function initUI(initialData) {
   const applyUnitSettings = document.getElementById('applyUnitSettings');
   const randomColorCheckbox = document.getElementById('randomColorCheckbox');
   const colorPicker = document.getElementById('colorPicker');
+  const labelNameCb = document.getElementById('labelNameCb');
   const labelPosCb = document.getElementById('labelPosCb');
   const labelRotCb = document.getElementById('labelRotCb');
   const labelScaleCb = document.getElementById('labelScaleCb');
@@ -418,6 +419,7 @@ function initUI(initialData) {
   if(scaleUnitInput) scaleUnitInput.value = (scaleUnitFactor/100).toFixed(2).replace(/\.00$/, '');
   if(rotUnitSelect) rotUnitSelect.value = rotationUnit;
   if(randomColorCheckbox) randomColorCheckbox.checked = useRandomColor;
+  if(labelNameCb) labelNameCb.checked = true;
   if(labelPosCb) labelPosCb.checked = showPosition;
   if(labelRotCb) labelRotCb.checked = showRotation;
   if(labelScaleCb) labelScaleCb.checked = showScale;
@@ -435,6 +437,7 @@ function initUI(initialData) {
 
   // 标签复选框变化时刷新
   function refreshLabelFlags(){
+      labelsVisible = labelNameCb ? labelNameCb.checked : true;
       showPosition = labelPosCb ? labelPosCb.checked : showPosition;
       showRotation = labelRotCb ? labelRotCb.checked : showRotation;
       showScale = labelScaleCb ? labelScaleCb.checked : showScale;
@@ -445,6 +448,7 @@ function initUI(initialData) {
   if(labelRotCb) labelRotCb.onchange = refreshLabelFlags;
   if(labelScaleCb) labelScaleCb.onchange = refreshLabelFlags;
   if(labelDistCb) labelDistCb.onchange = refreshLabelFlags;
+  if(labelNameCb) labelNameCb.onchange = refreshLabelFlags;
   }
 
   if(applyUnitSettings && posUnitInput && scaleUnitInput && rotUnitSelect){
