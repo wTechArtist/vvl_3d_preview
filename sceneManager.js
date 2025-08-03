@@ -8,7 +8,8 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 let scene, camera, renderer, labelRenderer, controls;
 let mirrorRoot;
 const objectsWithLabels = [];
-let labelsVisible = true;
+// let labelsVisible removed; use per-field visibility
+let showName = true;
 let animationFrameId = null;
 
 // --- 单位系统设置 ---
@@ -344,12 +345,15 @@ function animate() {
 
 function updateLabel(o) {
   if (!o || !o.labelObj || !o.mesh || !o.data) return; // Guard clause
-  o.labelObj.visible = labelsVisible;
+  // 根据所选字段是否至少存在来决定可见性
+  
   try {
     const dist = camera.position.distanceTo(o.mesh.position).toFixed(0);
     // 构建标签内容
     const lines = [];
-    lines.push(o.data.name || 'N/A');
+    if(showName){
+        lines.push(o.data.name || 'N/A');
+    }
     if(showPosition){
         lines.push(`position(cm): [${(o.data.position || [0,0,0]).join(', ')}]`);
     }
@@ -363,6 +367,7 @@ function updateLabel(o) {
         lines.push(`距离: ${dist}`);
     }
     o.labelDiv.innerHTML = lines.join('<br>');
+    o.labelObj.visible = lines.length > 0;
   } catch(e){
       console.warn("Error updating label for object:", o.data.name, e);
       o.labelDiv.innerHTML = `${o.data.name || 'N/A'}<br>Error updating label.`;
@@ -406,7 +411,7 @@ function initUI(initialData) {
   const posUnitInput = document.getElementById('posUnitInput');
   const scaleUnitInput = document.getElementById('scaleUnitInput');
   const rotUnitSelect = document.getElementById('rotUnitSelect');
-  const applyUnitSettings = document.getElementById('applyUnitSettings');
+  // const applyUnitSettings button removed;
   const randomColorCheckbox = document.getElementById('randomColorCheckbox');
   const colorPicker = document.getElementById('colorPicker');
   const labelNameCb = document.getElementById('labelNameCb');
@@ -437,7 +442,7 @@ function initUI(initialData) {
 
   // 标签复选框变化时刷新
   function refreshLabelFlags(){
-      labelsVisible = labelNameCb ? labelNameCb.checked : true;
+      showName = labelNameCb ? labelNameCb.checked : showName;
       showPosition = labelPosCb ? labelPosCb.checked : showPosition;
       showRotation = labelRotCb ? labelRotCb.checked : showRotation;
       showScale = labelScaleCb ? labelScaleCb.checked : showScale;
@@ -451,8 +456,13 @@ function initUI(initialData) {
   if(labelNameCb) labelNameCb.onchange = refreshLabelFlags;
   }
 
-  if(applyUnitSettings && posUnitInput && scaleUnitInput && rotUnitSelect){
-      applyUnitSettings.onclick = () => {
+  if(posUnitInput && scaleUnitInput && rotUnitSelect){
+      const rebuildScene = () => {
+          // 记录当前视角
+          const prevCamPos = camera ? camera.position.clone() : null;
+          const prevCamRot = camera ? camera.rotation.clone() : null;
+          const prevTarget = controls ? controls.target.clone() : null;
+
           const newPosFactor = parseFloat(posUnitInput.value);
           const newScaleInput = parseFloat(scaleUnitInput.value);
           const newScaleFactor = newScaleInput * 100;
@@ -465,24 +475,29 @@ function initUI(initialData) {
               rotationUnit = newRotUnit;
               useRandomColor = newUseRandom;
               customColor = newCustomColor;
-              if(randomColorCheckbox) randomColorCheckbox.checked = useRandomColor;
-              if(colorPicker) colorPicker.disabled = useRandomColor;
-              console.log(`Unit settings updated. position×${posUnitFactor}, scaleInput=${newScaleInput} (factor×${scaleUnitFactor}), rotUnit=${rotationUnit}`);
+              console.log('Settings changed → rebuild scene');
               let currentData;
-              try {
-                  currentData = JSON.parse(document.getElementById('jsonTextarea').value);
-              } catch(e){
-                  console.warn('Failed to parse JSON textarea when applying unit settings:', e);
-                  currentData = defaultData;
-              }
+              try { currentData = JSON.parse(document.getElementById('jsonTextarea').value);} catch(e){ currentData = defaultData; }
               initScene(currentData);
               initUI(currentData);
+              // 视角复原
+              if(prevCamPos && camera) camera.position.copy(prevCamPos);
+              if(prevCamRot && camera) camera.rotation.copy(prevCamRot);
+              if(prevTarget && controls) controls.target.copy(prevTarget);
+              if(camera && controls) {
+                  camera.lookAt(controls.target);
+                  controls.update();
+              }
               animate();
-          } else {
-              alert('倍率必须为正数');
           }
       };
+      posUnitInput.onchange = rebuildScene;
+      scaleUnitInput.onchange = rebuildScene;
+      rotUnitSelect.onchange = rebuildScene;
+      if(randomColorCheckbox) randomColorCheckbox.onchange = () => { colorPicker.disabled = randomColorCheckbox.checked; rebuildScene(); };
+      if(colorPicker) colorPicker.onchange = rebuildScene;
   }
+
 
   if(editor && icon && textarea && applyJsonButton){
       editor.onclick = e => {
