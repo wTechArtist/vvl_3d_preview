@@ -22,6 +22,12 @@ let rotationUnit = 'deg';
 let useRandomColor = true;
 let customColor = 0xffffff;
 
+// --- 标签显示选项 ---
+let showPosition = false;
+let showRotation = false;
+let showScale = false;
+let showDistance = false;
+
 /******************************
  * 默认数据（作为后备）
  ******************************/
@@ -341,12 +347,22 @@ function updateLabel(o) {
   o.labelObj.visible = labelsVisible;
   try {
     const dist = camera.position.distanceTo(o.mesh.position).toFixed(0);
-    o.labelDiv.innerHTML = 
-        `${o.data.name || 'N/A'}<br>
-        position位置(cm): [${(o.data.position || [0,0,0]).join(', ')}]<br>
-        rotation旋转(Pitch, Yaw, Roll): [${(o.data.rotation || [0,0,0]).join(', ')}] ${rotationUnit === 'deg' ? '°' : 'rad'}<br>
-        scale尺寸(m): [${(o.data.scale || [0,0,0]).join(', ')}]<br>
-        距离: ${dist}`;
+    // 构建标签内容
+    const lines = [];
+    lines.push(o.data.name || 'N/A');
+    if(showPosition){
+        lines.push(`position(cm): [${(o.data.position || [0,0,0]).join(', ')}]`);
+    }
+    if(showRotation){
+        lines.push(`rotation(P,Y,R): [${(o.data.rotation || [0,0,0]).join(', ')}] ${rotationUnit === 'deg' ? '°' : 'rad'}`);
+    }
+    if(showScale){
+        lines.push(`scale(m): [${(o.data.scale || [0,0,0]).join(', ')}]`);
+    }
+    if(showDistance){
+        lines.push(`距离: ${dist}`);
+    }
+    o.labelDiv.innerHTML = lines.join('<br>');
   } catch(e){
       console.warn("Error updating label for object:", o.data.name, e);
       o.labelDiv.innerHTML = `${o.data.name || 'N/A'}<br>Error updating label.`;
@@ -393,11 +409,20 @@ function initUI(initialData) {
   const applyUnitSettings = document.getElementById('applyUnitSettings');
   const randomColorCheckbox = document.getElementById('randomColorCheckbox');
   const colorPicker = document.getElementById('colorPicker');
+  const labelPosCb = document.getElementById('labelPosCb');
+  const labelRotCb = document.getElementById('labelRotCb');
+  const labelScaleCb = document.getElementById('labelScaleCb');
+  const labelDistCb = document.getElementById('labelDistCb');
 
   if(posUnitInput) posUnitInput.value = posUnitFactor;
   if(scaleUnitInput) scaleUnitInput.value = (scaleUnitFactor/100).toFixed(2).replace(/\.00$/, '');
   if(rotUnitSelect) rotUnitSelect.value = rotationUnit;
   if(randomColorCheckbox) randomColorCheckbox.checked = useRandomColor;
+  if(labelPosCb) labelPosCb.checked = showPosition;
+  if(labelRotCb) labelRotCb.checked = showRotation;
+  if(labelScaleCb) labelScaleCb.checked = showScale;
+  if(labelDistCb) labelDistCb.checked = showDistance;
+
   if(colorPicker){
       const colHex = '#' + customColor.toString(16).padStart(6,'0');
       colorPicker.value = colHex;
@@ -407,6 +432,19 @@ function initUI(initialData) {
               colorPicker.disabled = randomColorCheckbox.checked;
           };
       }
+
+  // 标签复选框变化时刷新
+  function refreshLabelFlags(){
+      showPosition = labelPosCb ? labelPosCb.checked : showPosition;
+      showRotation = labelRotCb ? labelRotCb.checked : showRotation;
+      showScale = labelScaleCb ? labelScaleCb.checked : showScale;
+      showDistance = labelDistCb ? labelDistCb.checked : showDistance;
+      objectsWithLabels.forEach(updateLabel);
+  }
+  if(labelPosCb) labelPosCb.onchange = refreshLabelFlags;
+  if(labelRotCb) labelRotCb.onchange = refreshLabelFlags;
+  if(labelScaleCb) labelScaleCb.onchange = refreshLabelFlags;
+  if(labelDistCb) labelDistCb.onchange = refreshLabelFlags;
   }
 
   if(applyUnitSettings && posUnitInput && scaleUnitInput && rotUnitSelect){
