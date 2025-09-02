@@ -18,6 +18,50 @@ let isEditMode = false; // 编辑模式开关
 let currentJsonData = null; // 当前的JSON数据，用于实时更新
 let selectedObject = null; // 当前选中的物体
 let raycaster, mouse; // 用于射线检测点击
+let isProgrammaticJsonUpdate = false; // 程序化更新textarea时抑制oninput
+
+function setTransformSnapFromUnits() {
+  if (transformControls) {
+    const snapWorld = 0.01 * posUnitFactor; // JSON最小单位0.01 → Three单位
+    try { transformControls.setTranslationSnap(snapWorld); } catch(e) { /* older versions may differ */ }
+  }
+}
+
+// --- 颜色解析与确定性颜色 ---
+function parseColorToNumber(input) {
+  if (typeof input === 'number') {
+    return (input >>> 0) & 0xFFFFFF;
+  }
+  if (typeof input === 'string') {
+    const s = input.trim();
+    if (s.startsWith('#')) {
+      return parseInt(s.slice(1), 16) & 0xFFFFFF;
+    }
+    if (s.startsWith('0x') || s.startsWith('0X')) {
+      return parseInt(s.slice(2), 16) & 0xFFFFFF;
+    }
+    const n = parseInt(s, 10);
+    if (!Number.isNaN(n)) return (n >>> 0) & 0xFFFFFF;
+  }
+  return 0xCCCCCC; // fallback
+}
+
+function hashStringDJB2(str) {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+  }
+  return hash >>> 0;
+}
+
+function getDeterministicColorForKey(key) {
+  const hash = hashStringDJB2(key);
+  // 取24位颜色，并提升亮度避免过暗
+  let color = hash & 0x00FFFFFF;
+  // 简单提升亮度：与中等亮度做或运算
+  color = color | 0x303030;
+  return color >>> 0;
+}
 
 function roundTo(value, decimals = 2) {
   const factor = Math.pow(10, decimals);
@@ -240,7 +284,16 @@ function createObject(objData, objectIndex) {
     // 将 UE 中的尺寸(单位: cm 或 ScaleFactor) 转换为 Three.js 长度
     const geoSize = scale.map(s => s * scaleUnitFactor);
     const geo = new THREE.BoxGeometry(...geoSize);
-    const colorValue = useRandomColor ? Math.random() * 0xffffff : customColor;
+    // 颜色优先级：objData.color > 自定义颜色(当useRandomColor为false) > 确定性颜色
+    let colorValue;
+    if (objData.color !== undefined && objData.color !== null) {
+      colorValue = parseColorToNumber(objData.color);
+    } else if (!useRandomColor) {
+      colorValue = customColor;
+    } else {
+      const key = `${objData.name || 'Object'}#${objectIndex}`;
+      colorValue = getDeterministicColorForKey(key);
+    }
     const mat = new THREE.MeshStandardMaterial({ color: colorValue, roughness: 0.7 });
     const mesh = new THREE.Mesh(geo, mat);
     const posVec = position.map(p => p * posUnitFactor);
@@ -287,16 +340,10 @@ function initTransformControls() {
     transformControls.setTranslationSnap(snapWorld);
   };
   updateTranslationSnap();
+  // 暴露全局函数便于外部根据单位变化时更新
+  window.__updateTransformSnap = updateTranslationSnap;
 
-  // 变换过程中实时更新数据 - 使用multiple事件确保捕获所有变化
-  transformControls.addEventListener('change', function () {
-    console.log('TransformControls change event triggered');
-    if (selectedObject) {
-      updateObjectTransform(selectedObject);
-    }
-  });
-
-  // 添加objectChange事件监听器作为备选
+  // 仅在拖拽进行中或结束时更新，避免多余的全量change噪声
   transformControls.addEventListener('objectChange', function () {
     console.log('TransformControls objectChange event triggered');
     if (selectedObject) {
@@ -393,6 +440,12 @@ function selectObject(mesh) {
   // 将变换控制器附加到选中的物体
   transformControls.attach(mesh);
   transformControls.visible = true;
+  // 进入任意模式时，将mesh.scale重置为1，避免把已写回JSON的scale再次叠加
+  try {
+    mesh.scale.set(1,1,1);
+  } catch(e) {
+    console.warn('Failed to reset mesh scale on select:', e);
+  }
 
   console.log(`选中物体: ${mesh.userData.originalData?.name || 'Unknown'}`);
 }
@@ -419,34 +472,41 @@ function updateObjectTransform(mesh) {
 
   console.log('Current mesh position:', mesh.position.x, mesh.position.y, mesh.position.z);
 
+  const mode = transformControls ? transformControls.getMode() : 'translate';
+
   // 获取在世界坐标系中的位置（考虑mirrorRoot的变换）
   const worldPosition = new THREE.Vector3();
   mesh.getWorldPosition(worldPosition);
   console.log('World position:', worldPosition.x, worldPosition.y, worldPosition.z);
 
-  // 将Three.js坐标转换回原始单位，考虑mirrorRoot的Y轴翻转，并四舍五入2位小数
-  const newPosition = [
+  // 仅按当前模式生成对应的新值
+  const newPosition = (mode === 'translate') ? [
     roundTo(worldPosition.x / posUnitFactor, 2),
     roundTo(-worldPosition.y / posUnitFactor, 2), // 因为mirrorRoot.scale.y = -1，所以需要翻转回来
     roundTo(worldPosition.z / posUnitFactor, 2)
-  ];
+  ] : null;
 
-  const newRotation = [
+  const newRotation = (mode === 'rotate') ? [
     roundTo(rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(mesh.rotation.x) : mesh.rotation.x, 2),
     roundTo(rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(mesh.rotation.y) : mesh.rotation.y, 2),
     roundTo(rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(mesh.rotation.z) : mesh.rotation.z, 2)
-  ];
+  ] : null;
 
-  const newScale = [
-    roundTo(mesh.scale.x, 3),
-    roundTo(mesh.scale.y, 3),
-    roundTo(mesh.scale.z, 3)
-  ];
+  // 缩放：JSON中的scale表示几何体的物理尺寸(米)。当前mesh.scale是在原几何基础上的附加缩放。
+  // 因此需要将 originalScale 与 mesh.scale 相乘得到新的绝对scale。
+  const newScale = (mode === 'scale') ? (() => {
+    const base = Array.isArray(mesh.userData.originalData.scale) ? mesh.userData.originalData.scale : [1,1,1];
+    return [
+      roundTo(base[0] * mesh.scale.x, 3),
+      roundTo(base[1] * mesh.scale.y, 3),
+      roundTo(base[2] * mesh.scale.z, 3)
+    ];
+  })() : null;
 
-  // 更新原始数据
-  mesh.userData.originalData.position = newPosition;
-  mesh.userData.originalData.rotation = newRotation;
-  mesh.userData.originalData.scale = newScale;
+  // 更新原始数据（只更新当前模式对应的字段）
+  if (newPosition) mesh.userData.originalData.position = newPosition;
+  if (newRotation) mesh.userData.originalData.rotation = newRotation;
+  if (newScale) mesh.userData.originalData.scale = newScale;
 
   // 更新当前JSON数据（优先按稳定索引，其次名称兜底）
   console.log('Updating JSON data. currentJsonData exists:', !!currentJsonData);
@@ -461,9 +521,9 @@ function updateObjectTransform(mesh) {
     console.log('Resolved object index:', objIndex);
     if (objIndex !== -1) {
       const target = currentJsonData.objects[objIndex];
-      target.position = newPosition;
-      target.rotation = newRotation;
-      target.scale = newScale;
+      if (newPosition) target.position = newPosition;
+      if (newRotation) target.rotation = newRotation;
+      if (newScale) target.scale = newScale;
 
       // 同步originalData引用
       mesh.userData.originalData = target;
@@ -485,7 +545,7 @@ function updateObjectTransform(mesh) {
     console.warn('currentJsonData or currentJsonData.objects is null/undefined');
   }
 
-  console.log(`物体变换更新: 位置=${newPosition}, 旋转=${newRotation}, 缩放=${newScale}`);
+  console.log(`物体变换更新: 模式=${mode}`);
 }
 
 function toggleEditMode() {
@@ -728,7 +788,7 @@ function initUI(initialData) {
   const editor = document.getElementById('jsonEditor');
   const icon = document.getElementById('expandCollapseIcon');
   const textarea = document.getElementById('jsonTextarea');
-  const applyJsonButton = document.getElementById('applyJsonButton');
+  const applyJsonButton = null; // 已移除按钮
 
   // --- 单位设置控制 ---
   const posUnitInput = document.getElementById('posUnitInput');
@@ -805,8 +865,8 @@ function initUI(initialData) {
               initScene(currentJsonData);
               initUI(currentJsonData);
               // 更新TransformControls的移动步进
-              if (typeof updateTranslationSnap === 'function') {
-                  try { updateTranslationSnap(); } catch (e) { console.warn('updateTranslationSnap not available:', e); }
+              if (typeof window.__updateTransformSnap === 'function') {
+                  try { window.__updateTransformSnap(); } catch (e) { console.warn('updateTranslationSnap not available:', e); }
               }
               // 视角复原
               if(prevCamPos && camera) camera.position.copy(prevCamPos);
@@ -827,7 +887,7 @@ function initUI(initialData) {
   }
 
 
-  if(editor && icon && textarea && applyJsonButton){
+  if(editor && icon && textarea){
       editor.onclick = e => {
         if (e.target.id === 'jsonEditorHeader' || e.target.parentElement.id === 'jsonEditorHeader') {
           editor.classList.toggle('expanded');
@@ -835,39 +895,48 @@ function initUI(initialData) {
           console.log(`JSON editor toggled. Expanded: ${editor.classList.contains('expanded')}`);
         }
       };
+      isProgrammaticJsonUpdate = true;
       textarea.value = JSON.stringify(initialData, null, 2);
-      applyJsonButton.onclick = async () => { // 改为async
-        console.log("Attempting to apply new JSON data...");
-        try {
-          const newJsonDataString = textarea.value;
-          const newData = JSON.parse(newJsonDataString);
-          console.log("New JSON data parsed successfully.", newData);
-          
-          // 停止当前动画，清理场景，然后用新数据重新启动整个boot过程或核心初始化部分
-          if (animationFrameId) {
-            cancelAnimationFrame(animationFrameId);
-            animationFrameId = null;
-          }
-          // cleanUpExistingScene(); // cleanUp会由initScene的开头调用
-          
-          // 重点：重新运行初始化场景和UI的逻辑
-          // 不仅仅是 initScene(newData)，而是更完整的重置
-          // 为了简单起见，我们再次调用boot，但这可能导致事件监听器重复绑定等问题，理想情况下应该有更精细的重置函数
-          // 或者，确保initScene和initUI能够处理重复调用（例如，先移除旧的事件监听器）
-          // 当前的initScene开头会调用cleanUpExistingScene，这应该能处理大部分重置
-          currentJsonData = JSON.parse(JSON.stringify(newData)); // 更新当前JSON数据
-          initScene(currentJsonData); // initScene 内部会调用 cleanUpExistingScene
-          initUI(currentJsonData);    // 更新UI，特别是JSON编辑器中的内容
-          animate();          // 重新启动动画循环
-          
-          document.getElementById('info').innerHTML = '已成功应用新JSON数据';
+      isProgrammaticJsonUpdate = false;
+      
+      // 实时自动应用：500ms防抖
+      let jsonInputTimer = null;
+      textarea.oninput = () => {
+        if (isProgrammaticJsonUpdate) return;
+        if (jsonInputTimer) clearTimeout(jsonInputTimer);
+        jsonInputTimer = setTimeout(() => {
+          try {
+            const newData = JSON.parse(textarea.value);
+            currentJsonData = JSON.parse(JSON.stringify(newData));
+            // 保存当前相机与控件状态
+            const prevCamPos = camera ? camera.position.clone() : null;
+            const prevCamRot = camera ? camera.rotation.clone() : null;
+            const prevTarget = controls ? controls.target.clone() : null;
 
-        } catch (e) {
-          console.error('JSON parsing error or scene re-init error:', e);
-          alert('JSON格式错误或场景更新失败: ' + e.message);
-          document.getElementById('info').innerHTML = `<strong style="color:red;">JSON处理或场景更新失败: ${e.message}</strong>`;
-        }
+            initScene(currentJsonData);
+            initUI(currentJsonData);
+            // 恢复视角
+            if(prevCamPos && camera) camera.position.copy(prevCamPos);
+            if(prevCamRot && camera) camera.rotation.copy(prevCamRot);
+            if(prevTarget && controls) controls.target.copy(prevTarget);
+            if(camera && controls) {
+              camera.lookAt(controls.target);
+              controls.update();
+            }
+            animate();
+            if (typeof window.__updateTransformSnap === 'function') {
+              try { window.__updateTransformSnap(); } catch(e) {}
+            }
+            const info = document.getElementById('info');
+            if (info) info.innerHTML = 'JSON已自动应用 (500ms)';
+          } catch(e) {
+            // 解析失败不重建，提示错误
+            const info = document.getElementById('info');
+            if (info) info.innerHTML = `<strong style="color:orange;">JSON解析失败，未应用: ${e.message}</strong>`;
+          }
+        }, 500);
       };
+      // 按钮已删除，保留实时自动应用即可
   } else {
       console.warn("One or more JSON editor UI elements not found.");
   }
