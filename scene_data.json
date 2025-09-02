@@ -1,33 +1,33 @@
 {
   "camera": {
-    "position": [50, 0, 0],
-    "rotation": [10, 0, 0],   
-    "fov": 65                 
+    "position": [-300, -200, 200],
+    "rotation": [-30, -30, 0],
+    "fov": 65
   },
   "objects": [
     {
-      "name": "X方向墙",
-      "position": [0, -500, 440],
+      "name": "Box1",
+      "position": [0, 0, 0],
       "rotation": [0, 0, 0],
-      "scale": [10, 0.4, 8.5]
+      "scale": [1, 1, 1]
     },
     {
-      "name": "Y方向墙",
-      "position": [500, 0, 440], 
-      "rotation": [0, 0, 0],  
-      "scale": [0.4,10,  8.5]    
+      "name": "Box2",
+      "position": [150, 0, 0],
+      "rotation": [0, 0, 45],
+      "scale": [0.5, 2, 0.5]
     },
     {
-      "name": "地板",
-      "position": [0, 0, 0], 
-      "rotation": [0, 0, 0],  
-      "scale": [10,10,  0.3]    
+      "name": "Box3",
+      "position": [0, 150, 0],
+      "rotation": [30, 0, 0],
+      "scale": [2, 0.5, 0.5]
     },
     {
-      "name": "天花板",
-      "position": [0, 0, 850], 
-      "rotation": [0, 0, 0],  
-      "scale": [10,10,  0.3]    
+      "name": "Tower",
+      "position": [-150, -150, 0],
+      "rotation": [0, 0, 0],
+      "scale": [0.3, 0.3, 3]
     }
   ]
 }

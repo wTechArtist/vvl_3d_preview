@@ -1,16 +1,23 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
 /******************************
  * 全局变量与初始设置
  ******************************/
 let scene, camera, renderer, labelRenderer, controls;
+let transformControls;
 let mirrorRoot;
 const objectsWithLabels = [];
+const selectableObjects = []; // 可选择的物体数组
 // let labelsVisible removed; use per-field visibility
 let showName = true;
 let animationFrameId = null;
+let isEditMode = false; // 编辑模式开关
+let currentJsonData = null; // 当前的JSON数据，用于实时更新
+let selectedObject = null; // 当前选中的物体
+let raycaster, mouse; // 用于射线检测点击
 
 // --- 单位系统设置 ---
 // 位置倍率: UE 单位(厘米) × posUnitFactor → Three.js 单位
@@ -47,7 +54,8 @@ const defaultData = {
 export async function boot() {
   console.log("Booting application...");
   const jsonData = await loadSceneData();
-  initScene(jsonData); 
+  currentJsonData = JSON.parse(JSON.stringify(jsonData)); // 深拷贝保存当前数据
+  initScene(currentJsonData); 
   // initUI(jsonData); // 暂时注释掉，先确保场景渲染正常
   // animate(); // 暂时注释掉，先进行单帧调试
 
@@ -202,8 +210,12 @@ function initScene(data) {
     });
 
     if (data.objects && Array.isArray(data.objects)) {
-        data.objects.forEach(objData => createObject(objData));
+        data.objects.forEach((objData, index) => createObject(objData, index));
     }
+
+    // 初始化变换控制器和点击检测
+    initTransformControls();
+    initMouseInteraction();
 
     window.addEventListener('resize', onResize, false);
     console.log("Scene initialized successfully.");
@@ -214,7 +226,7 @@ function initScene(data) {
   }
 }
 
-function createObject(objData) {
+function createObject(objData, objectIndex) {
   try {
     const scale = objData.scale || [1,1,1];
     const position = objData.position || [0,0,0];
@@ -230,7 +242,12 @@ function createObject(objData) {
     mesh.position.set(...posVec);
     const rotVec = rotationUnit === 'deg' ? rotation.map(r => THREE.MathUtils.degToRad(r)) : rotation;
     mesh.rotation.set(...rotVec);
+    
+    // 给mesh添加userData来保存原始数据引用与稳定索引
+    mesh.userData = { originalData: objData, objectIndex, name: objData.name };
+    
     mirrorRoot.add(mesh);
+    selectableObjects.push(mesh); // 添加到可选择对象数组
 
     const labelDiv = document.createElement('div');
     labelDiv.className = 'label';
@@ -242,6 +259,246 @@ function createObject(objData) {
   } catch(e){
       console.error("Error creating object:", objData, e);
   }
+}
+
+/******************************
+ * 变换控制器和交互功能
+ ******************************/
+function initTransformControls() {
+  if (selectableObjects.length === 0) {
+    console.log("No selectable objects to initialize transform controls.");
+    return;
+  }
+
+  transformControls = new TransformControls(camera, renderer.domElement);
+  transformControls.setMode('translate'); // 默认为移动模式
+  transformControls.setSize(0.8); // 设置gizmo大小
+  transformControls.visible = false; // 初始隐藏
+  scene.add(transformControls);
+
+  // 变换过程中实时更新数据 - 使用multiple事件确保捕获所有变化
+  transformControls.addEventListener('change', function () {
+    console.log('TransformControls change event triggered');
+    if (selectedObject) {
+      updateObjectTransform(selectedObject);
+    }
+  });
+
+  // 添加objectChange事件监听器作为备选
+  transformControls.addEventListener('objectChange', function () {
+    console.log('TransformControls objectChange event triggered');
+    if (selectedObject) {
+      updateObjectTransform(selectedObject);
+    }
+  });
+
+  // 在拖拽结束时确保更新
+  transformControls.addEventListener('dragging-changed', function (event) {
+    console.log('TransformControls dragging-changed:', event.value);
+    if (controls) {
+      controls.enabled = !event.value;
+    }
+    // 当拖拽结束时(event.value为false)，确保更新数据
+    if (!event.value && selectedObject) {
+      console.log('Dragging ended, updating transform');
+      updateObjectTransform(selectedObject);
+    }
+  });
+
+  console.log("Transform controls initialized with", selectableObjects.length, "objects.");
+}
+
+function initMouseInteraction() {
+  raycaster = new THREE.Raycaster();
+  mouse = new THREE.Vector2();
+
+  // 添加点击事件监听器
+  renderer.domElement.addEventListener('click', onMouseClick, false);
+  
+  // 添加键盘事件监听器用于切换模式
+  window.addEventListener('keydown', onKeyDown, false);
+}
+
+function onMouseClick(event) {
+  if (!isEditMode) return;
+
+  // 计算鼠标位置
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+  // 射线检测
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObjects(selectableObjects);
+
+  if (intersects.length > 0) {
+    const clickedObject = intersects[0].object;
+    selectObject(clickedObject);
+  } else {
+    // 点击空白处取消选择
+    deselectObject();
+  }
+}
+
+function onKeyDown(event) {
+  if (!isEditMode || !selectedObject) return;
+
+  switch (event.key) {
+    case 'g': // G键切换到移动模式
+    case 'G':
+      transformControls.setMode('translate');
+      console.log('切换到移动模式');
+      break;
+    case 'r': // R键切换到旋转模式
+    case 'R':
+      transformControls.setMode('rotate');
+      console.log('切换到旋转模式');
+      break;
+    case 's': // S键切换到缩放模式
+    case 'S':
+      transformControls.setMode('scale');
+      console.log('切换到缩放模式');
+      break;
+    case 'Escape': // ESC键取消选择
+      deselectObject();
+      break;
+  }
+}
+
+function selectObject(mesh) {
+  // 取消之前选中物体的高亮
+  if (selectedObject && selectedObject.material) {
+    selectedObject.material.emissive.setHex(0x000000);
+  }
+
+  selectedObject = mesh;
+  
+  // 高亮选中的物体
+  if (mesh.material) {
+    mesh.material.emissive.setHex(0x333333);
+  }
+
+  // 将变换控制器附加到选中的物体
+  transformControls.attach(mesh);
+  transformControls.visible = true;
+
+  console.log(`选中物体: ${mesh.userData.originalData?.name || 'Unknown'}`);
+}
+
+function deselectObject() {
+  if (selectedObject && selectedObject.material) {
+    selectedObject.material.emissive.setHex(0x000000);
+  }
+  
+  selectedObject = null;
+  transformControls.detach();
+  transformControls.visible = false;
+  
+  console.log('取消选择');
+}
+
+function updateObjectTransform(mesh) {
+  console.log('updateObjectTransform called for:', mesh.userData?.originalData?.name || 'Unknown');
+  
+  if (!mesh.userData || !mesh.userData.originalData) {
+    console.warn('Mesh missing userData or originalData');
+    return;
+  }
+
+  console.log('Current mesh position:', mesh.position.x, mesh.position.y, mesh.position.z);
+
+  // 获取在世界坐标系中的位置（考虑mirrorRoot的变换）
+  const worldPosition = new THREE.Vector3();
+  mesh.getWorldPosition(worldPosition);
+  console.log('World position:', worldPosition.x, worldPosition.y, worldPosition.z);
+
+  // 将Three.js坐标转换回原始单位，考虑mirrorRoot的Y轴翻转
+  const newPosition = [
+    worldPosition.x / posUnitFactor,
+    -worldPosition.y / posUnitFactor, // 因为mirrorRoot.scale.y = -1，所以需要翻转回来
+    worldPosition.z / posUnitFactor
+  ];
+
+  const newRotation = [
+    rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(mesh.rotation.x) : mesh.rotation.x,
+    rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(mesh.rotation.y) : mesh.rotation.y,
+    rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(mesh.rotation.z) : mesh.rotation.z
+  ];
+
+  const newScale = [
+    mesh.scale.x,
+    mesh.scale.y,
+    mesh.scale.z
+  ];
+
+  // 更新原始数据
+  mesh.userData.originalData.position = newPosition;
+  mesh.userData.originalData.rotation = newRotation;
+  mesh.userData.originalData.scale = newScale;
+
+  // 更新当前JSON数据（优先按稳定索引，其次名称兜底）
+  console.log('Updating JSON data. currentJsonData exists:', !!currentJsonData);
+  if (currentJsonData && Array.isArray(currentJsonData.objects)) {
+    let objIndex = -1;
+    if (typeof mesh.userData.objectIndex === 'number') {
+      objIndex = mesh.userData.objectIndex;
+    }
+    if (objIndex < 0 || !currentJsonData.objects[objIndex]) {
+      objIndex = currentJsonData.objects.findIndex(obj => obj && obj.name === mesh.userData.name);
+    }
+    console.log('Resolved object index:', objIndex);
+    if (objIndex !== -1) {
+      const target = currentJsonData.objects[objIndex];
+      target.position = newPosition;
+      target.rotation = newRotation;
+      target.scale = newScale;
+
+      // 同步originalData引用
+      mesh.userData.originalData = target;
+      mesh.userData.objectIndex = objIndex;
+
+      // 更新JSON编辑器中的内容
+      const textarea = document.getElementById('jsonTextarea');
+      console.log('Textarea found:', !!textarea);
+      if (textarea) {
+        textarea.value = JSON.stringify(currentJsonData, null, 2);
+        console.log('JSON textarea updated successfully');
+      } else {
+        console.warn('JSON textarea not found');
+      }
+    } else {
+      console.warn('Object not found in currentJsonData.objects');
+    }
+  } else {
+    console.warn('currentJsonData or currentJsonData.objects is null/undefined');
+  }
+
+  console.log(`物体变换更新: 位置=${newPosition}, 旋转=${newRotation}, 缩放=${newScale}`);
+}
+
+function toggleEditMode() {
+  isEditMode = !isEditMode;
+  
+  const button = document.getElementById('dragModeToggle');
+  if (button) {
+    button.textContent = isEditMode ? '退出编辑' : '编辑模式';
+    button.classList.toggle('active', isEditMode);
+  }
+
+  // 如果退出编辑模式，取消当前选择
+  if (!isEditMode) {
+    deselectObject();
+  }
+
+  // 更新info提示
+  const info = document.getElementById('info');
+  if (info && isEditMode) {
+    info.innerHTML = '编辑模式: 点击Box显示编辑轴 | G=移动 R=旋转 S=缩放 ESC=取消选择<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)';
+  } else if (info && !isEditMode) {
+    info.innerHTML = '交互: 左键拖动 - 旋转视角 | 鼠标滚轮 - 缩放 | 右键拖动 - 平移<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)';
+  }
+
+  console.log(`编辑模式 ${isEditMode ? '启用' : '禁用'}`);
 }
 
 /******************************
@@ -278,6 +535,23 @@ function cleanUpExistingScene() {
   }
   window.removeEventListener('resize', onResize);
   console.log("Removed resize listener.");
+
+  // 清理变换控制器
+  if (transformControls) {
+    transformControls.dispose();
+    transformControls = null;
+    console.log("Disposed transform controls.");
+  }
+
+  // 清理事件监听器
+  if (renderer && renderer.domElement) {
+    renderer.domElement.removeEventListener('click', onMouseClick);
+  }
+  window.removeEventListener('keydown', onKeyDown);
+
+  // 清理选择状态
+  selectedObject = null;
+  selectableObjects.length = 0;
 
   // Dispose and remove all objects from objectsWithLabels array
   while(objectsWithLabels.length > 0){
@@ -391,12 +665,49 @@ function onResize() {
  ******************************/
 function initUI(initialData) {
   console.log("Initializing UI...");
+  
+  // 编辑模式按钮
+  const editModeButton = document.getElementById('dragModeToggle');
+  if(editModeButton){
+      editModeButton.onclick = toggleEditMode;
+      // 初始化按钮文本
+      editModeButton.textContent = isEditMode ? '退出编辑' : '编辑模式';
+      editModeButton.classList.toggle('active', isEditMode);
+  } else {
+      console.warn("Edit mode button not found.");
+  }
+  
   const toggleLabelsButton = document.getElementById('toggleLabels');
   if(toggleLabelsButton){
       toggleLabelsButton.onclick = () => {
-        labelsVisible = !labelsVisible;
-        toggleLabelsButton.textContent = labelsVisible ? '隐藏标签' : '显示标签';
-        console.log(`Labels visibility toggled to: ${labelsVisible}`);
+        // 切换所有标签字段的显示状态
+        const allHidden = !showName && !showPosition && !showRotation && !showScale && !showDistance;
+        const newVisibility = allHidden; // 如果全部隐藏，则显示所有；否则隐藏所有
+        
+        showName = newVisibility;
+        showPosition = newVisibility;
+        showRotation = newVisibility;
+        showScale = newVisibility;
+        showDistance = newVisibility;
+        
+        // 更新复选框状态
+        const labelNameCb = document.getElementById('labelNameCb');
+        const labelPosCb = document.getElementById('labelPosCb');
+        const labelRotCb = document.getElementById('labelRotCb');
+        const labelScaleCb = document.getElementById('labelScaleCb');
+        const labelDistCb = document.getElementById('labelDistCb');
+        
+        if(labelNameCb) labelNameCb.checked = showName;
+        if(labelPosCb) labelPosCb.checked = showPosition;
+        if(labelRotCb) labelRotCb.checked = showRotation;
+        if(labelScaleCb) labelScaleCb.checked = showScale;
+        if(labelDistCb) labelDistCb.checked = showDistance;
+        
+        // 更新标签显示
+        objectsWithLabels.forEach(updateLabel);
+        
+        toggleLabelsButton.textContent = newVisibility ? '隐藏标签' : '显示标签';
+        console.log(`Labels visibility toggled to: ${newVisibility}`);
       };
   } else {
       console.warn("Toggle labels button not found.");
@@ -478,8 +789,9 @@ function initUI(initialData) {
               console.log('Settings changed → rebuild scene');
               let currentData;
               try { currentData = JSON.parse(document.getElementById('jsonTextarea').value);} catch(e){ currentData = defaultData; }
-              initScene(currentData);
-              initUI(currentData);
+              currentJsonData = JSON.parse(JSON.stringify(currentData)); // 更新当前JSON数据
+              initScene(currentJsonData);
+              initUI(currentJsonData);
               // 视角复原
               if(prevCamPos && camera) camera.position.copy(prevCamPos);
               if(prevCamRot && camera) camera.rotation.copy(prevCamRot);
@@ -527,8 +839,9 @@ function initUI(initialData) {
           // 为了简单起见，我们再次调用boot，但这可能导致事件监听器重复绑定等问题，理想情况下应该有更精细的重置函数
           // 或者，确保initScene和initUI能够处理重复调用（例如，先移除旧的事件监听器）
           // 当前的initScene开头会调用cleanUpExistingScene，这应该能处理大部分重置
-          initScene(newData); // initScene 内部会调用 cleanUpExistingScene
-          initUI(newData);    // 更新UI，特别是JSON编辑器中的内容
+          currentJsonData = JSON.parse(JSON.stringify(newData)); // 更新当前JSON数据
+          initScene(currentJsonData); // initScene 内部会调用 cleanUpExistingScene
+          initUI(currentJsonData);    // 更新UI，特别是JSON编辑器中的内容
           animate();          // 重新启动动画循环
           
           document.getElementById('info').innerHTML = '已成功应用新JSON数据';

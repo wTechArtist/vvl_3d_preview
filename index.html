@@ -42,6 +42,26 @@
         #toggleLabels:hover {
             background-color: rgba(50,50,50,0.9);
         }
+        /* 编辑模式按钮 */
+        #dragModeToggle {
+            position: absolute;
+            top: 10px;
+            right: 120px;
+            padding: 8px 15px;
+            background-color: rgba(0,0,0,0.7);
+            color: white;
+            border: 1px solid #666;
+            border-radius: 5px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        #dragModeToggle:hover {
+            background-color: rgba(50,50,50,0.9);
+        }
+        #dragModeToggle.active {
+            background-color: rgba(76, 175, 80, 0.8);
+            border-color: #4CAF50;
+        }
         /* 单位倍率控制面板 */
         #unitSettings {
             position: absolute;
@@ -145,6 +165,8 @@
         交互: 左键拖动 - 旋转视角 | 鼠标滚轮 - 缩放 | 右键拖动 - 平移<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)
     </div>
     
+    <button id="dragModeToggle">编辑模式</button>
+    <button id="toggleLabels">隐藏标签</button>
     
     <div id="unitSettings">
         <div style="margin-bottom:4px;">position位置倍率(cm): <input id="posUnitInput" type="number" value="1" step="1" style="width:60px;"></div>
