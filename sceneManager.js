@@ -19,6 +19,11 @@ let currentJsonData = null; // 当前的JSON数据，用于实时更新
 let selectedObject = null; // 当前选中的物体
 let raycaster, mouse; // 用于射线检测点击
 
+function roundTo(value, decimals = 2) {
+  const factor = Math.pow(10, decimals);
+  return Math.round(value * factor) / factor;
+}
+
 // --- 单位系统设置 ---
 // 位置倍率: UE 单位(厘米) × posUnitFactor → Three.js 单位
 let posUnitFactor = 1;
@@ -276,6 +281,13 @@ function initTransformControls() {
   transformControls.visible = false; // 初始隐藏
   scene.add(transformControls);
 
+  // 设置移动步进为0.01（以JSON的单位为准：cm），考虑posUnitFactor换算到Three单位
+  const updateTranslationSnap = () => {
+    const snapWorld = 0.01 * posUnitFactor; // JSON单位0.01 → Three单位
+    transformControls.setTranslationSnap(snapWorld);
+  };
+  updateTranslationSnap();
+
   // 变换过程中实时更新数据 - 使用multiple事件确保捕获所有变化
   transformControls.addEventListener('change', function () {
     console.log('TransformControls change event triggered');
@@ -375,7 +387,7 @@ function selectObject(mesh) {
   
   // 高亮选中的物体
   if (mesh.material) {
-    mesh.material.emissive.setHex(0x333333);
+    mesh.material.emissive.setHex(0x888888);
   }
 
   // 将变换控制器附加到选中的物体
@@ -412,23 +424,23 @@ function updateObjectTransform(mesh) {
   mesh.getWorldPosition(worldPosition);
   console.log('World position:', worldPosition.x, worldPosition.y, worldPosition.z);
 
-  // 将Three.js坐标转换回原始单位，考虑mirrorRoot的Y轴翻转
+  // 将Three.js坐标转换回原始单位，考虑mirrorRoot的Y轴翻转，并四舍五入2位小数
   const newPosition = [
-    worldPosition.x / posUnitFactor,
-    -worldPosition.y / posUnitFactor, // 因为mirrorRoot.scale.y = -1，所以需要翻转回来
-    worldPosition.z / posUnitFactor
+    roundTo(worldPosition.x / posUnitFactor, 2),
+    roundTo(-worldPosition.y / posUnitFactor, 2), // 因为mirrorRoot.scale.y = -1，所以需要翻转回来
+    roundTo(worldPosition.z / posUnitFactor, 2)
   ];
 
   const newRotation = [
-    rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(mesh.rotation.x) : mesh.rotation.x,
-    rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(mesh.rotation.y) : mesh.rotation.y,
-    rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(mesh.rotation.z) : mesh.rotation.z
+    roundTo(rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(mesh.rotation.x) : mesh.rotation.x, 2),
+    roundTo(rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(mesh.rotation.y) : mesh.rotation.y, 2),
+    roundTo(rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(mesh.rotation.z) : mesh.rotation.z, 2)
   ];
 
   const newScale = [
-    mesh.scale.x,
-    mesh.scale.y,
-    mesh.scale.z
+    roundTo(mesh.scale.x, 3),
+    roundTo(mesh.scale.y, 3),
+    roundTo(mesh.scale.z, 3)
   ];
 
   // 更新原始数据
@@ -792,6 +804,10 @@ function initUI(initialData) {
               currentJsonData = JSON.parse(JSON.stringify(currentData)); // 更新当前JSON数据
               initScene(currentJsonData);
               initUI(currentJsonData);
+              // 更新TransformControls的移动步进
+              if (typeof updateTranslationSnap === 'function') {
+                  try { updateTranslationSnap(); } catch (e) { console.warn('updateTranslationSnap not available:', e); }
+              }
               // 视角复原
               if(prevCamPos && camera) camera.position.copy(prevCamPos);
               if(prevCamRot && camera) camera.rotation.copy(prevCamRot);
