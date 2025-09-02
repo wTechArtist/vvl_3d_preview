@@ -235,7 +235,7 @@ function createObject(objData) {
     const labelDiv = document.createElement('div');
     labelDiv.className = 'label';
     const labelObj = new CSS2DObject(labelDiv);
-    labelObj.position.set(0, geoSize[1] / 2 + 20, 0); 
+    labelObj.position.set(0, 0, 0);
     mesh.add(labelObj);
 
     objectsWithLabels.push({ mesh, labelObj, labelDiv, data: objData });
