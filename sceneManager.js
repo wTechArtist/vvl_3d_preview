@@ -16,7 +16,7 @@ let showName = true;
 let animationFrameId = null;
 let isEditMode = true; // 始终处于编辑模式
 let currentJsonData = null; // 当前的JSON数据，用于实时更新
-let selectedObject = null; // 当前选中的物体
+let selectedObjects = []; // 当前选中的物体数组（支持多选）
 let raycaster, mouse; // 用于射线检测点击
 let isProgrammaticJsonUpdate = false; // 程序化更新textarea时抑制oninput
 
@@ -346,9 +346,7 @@ function initTransformControls() {
   // 仅在拖拽进行中或结束时更新，避免多余的全量change噪声
   transformControls.addEventListener('objectChange', function () {
     console.log('TransformControls objectChange event triggered');
-    if (selectedObject) {
-      updateObjectTransform(selectedObject);
-    }
+    updateSelectedObjectsTransform();
   });
 
   // 在拖拽结束时确保更新
@@ -357,10 +355,14 @@ function initTransformControls() {
     if (controls) {
       controls.enabled = !event.value;
     }
-    // 当拖拽结束时(event.value为false)，确保更新数据
-    if (!event.value && selectedObject) {
+    
+    if (event.value) {
+      // 拖拽开始时记录初始变换状态
+      recordMultiSelectInitialTransforms();
+    } else if (selectedObjects.length > 0) {
+      // 当拖拽结束时(event.value为false)，确保更新数据
       console.log('Dragging ended, updating transform');
-      updateObjectTransform(selectedObject);
+      updateSelectedObjectsTransform();
     }
   });
 
@@ -373,8 +375,6 @@ function initMouseInteraction() {
 
   // 添加点击事件监听器
   renderer.domElement.addEventListener('click', onMouseClick, false);
-  // 同时监听 pointerdown 提高命中可靠性（防止轻微移动导致 click 不触发）
-  renderer.domElement.addEventListener('pointerdown', onMouseClick, false);
   
   // 添加键盘事件监听器用于切换模式
   window.addEventListener('keydown', onKeyDown, false);
@@ -382,7 +382,10 @@ function initMouseInteraction() {
 
 function onMouseClick(event) {
   // 若当前正在拖拽 TransformControls，则不进行选中命中
-  if (transformControls && transformControls.dragging) return;
+  if (transformControls && transformControls.dragging) {
+    console.log('Ignoring click during transform controls dragging');
+    return;
+  }
   // 仅处理左键
   if (event.button !== undefined && event.button !== 0) return;
 
@@ -394,19 +397,34 @@ function onMouseClick(event) {
   // 射线检测
   raycaster.setFromCamera(mouse, camera);
   const intersects = raycaster.intersectObjects(selectableObjects);
-  console.log('Raycast hits:', intersects.length);
+  console.log('Raycast hits:', intersects.length, 'Objects:', intersects.map(i => i.object.userData?.originalData?.name || 'Unknown'));
+
+  const isShiftPressed = event.shiftKey;
 
   if (intersects.length > 0) {
-    const clickedObject = intersects[0].object;
-    selectObject(clickedObject);
+    // 只取最近的可选择对象
+    const clickedObject = intersects.find(intersect => 
+      selectableObjects.includes(intersect.object)
+    )?.object || intersects[0].object;
+    
+    if (isShiftPressed) {
+      // Shift多选模式
+      toggleObjectSelection(clickedObject);
+    } else {
+      // 单选模式
+      selectSingleObject(clickedObject);
+    }
   } else {
-    // 点击空白处取消选择
-    deselectObject();
+    // 点击空白处
+    if (!isShiftPressed) {
+      // 非Shift模式下取消所有选择
+      deselectAllObjects();
+    }
   }
 }
 
 function onKeyDown(event) {
-  if (!selectedObject) return;
+  if (selectedObjects.length === 0) return;
 
   switch (event.key) {
     case 'g': // G键切换到移动模式
@@ -425,18 +443,18 @@ function onKeyDown(event) {
       console.log('切换到缩放模式');
       break;
     case 'Escape': // ESC键取消选择
-      deselectObject();
+      deselectAllObjects();
       break;
   }
 }
 
-function selectObject(mesh) {
-  // 取消之前选中物体的高亮
-  if (selectedObject && selectedObject.material) {
-    selectedObject.material.emissive.setHex(0x000000);
-  }
-
-  selectedObject = mesh;
+// 单选模式：清除所有选择并选择指定对象
+function selectSingleObject(mesh) {
+  // 清除所有现有选择
+  deselectAllObjects();
+  
+  // 添加到选择列表
+  selectedObjects.push(mesh);
   
   // 高亮选中的物体
   if (mesh.material) {
@@ -444,28 +462,164 @@ function selectObject(mesh) {
   }
 
   // 将变换控制器附加到选中的物体
-  transformControls.attach(mesh);
-  transformControls.visible = true;
-  // 进入任意模式时，将mesh.scale重置为1，避免把已写回JSON的scale再次叠加
-  try {
-    mesh.scale.set(1,1,1);
-  } catch(e) {
-    console.warn('Failed to reset mesh scale on select:', e);
-  }
-
+  updateTransformControls();
+  
   console.log(`选中物体: ${mesh.userData.originalData?.name || 'Unknown'}`);
 }
 
-function deselectObject() {
-  if (selectedObject && selectedObject.material) {
-    selectedObject.material.emissive.setHex(0x000000);
+// Shift多选模式：切换对象的选择状态
+function toggleObjectSelection(mesh) {
+  const index = selectedObjects.indexOf(mesh);
+  console.log(`toggleObjectSelection called for: ${mesh.userData.originalData?.name || 'Unknown'}, currently selected: ${index > -1}, total selected: ${selectedObjects.length}`);
+  
+  if (index > -1) {
+    // 已选中，取消选择
+    selectedObjects.splice(index, 1);
+    if (mesh.material) {
+      mesh.material.emissive.setHex(0x000000);
+    }
+    console.log(`取消选中物体: ${mesh.userData.originalData?.name || 'Unknown'}, remaining selected: ${selectedObjects.length}`);
+  } else {
+    // 未选中，添加选择
+    selectedObjects.push(mesh);
+    if (mesh.material) {
+      mesh.material.emissive.setHex(0x888888);
+    }
+    console.log(`添加选中物体: ${mesh.userData.originalData?.name || 'Unknown'}, total selected: ${selectedObjects.length}`);
   }
   
-  selectedObject = null;
+  updateTransformControls();
+}
+
+// 取消所有选择
+function deselectAllObjects() {
+  selectedObjects.forEach(mesh => {
+    if (mesh.material) {
+      mesh.material.emissive.setHex(0x000000);
+    }
+  });
+  
+  selectedObjects.length = 0;
   transformControls.detach();
   transformControls.visible = false;
   
-  console.log('取消选择');
+  console.log('取消所有选择');
+}
+
+// 更新TransformControls的附加对象
+function updateTransformControls() {
+  if (selectedObjects.length === 0) {
+    transformControls.detach();
+    transformControls.visible = false;
+  } else {
+    // 对于单选和多选，都附加到第一个对象
+    // 多选时会在objectChange事件中同步移动其他对象
+    const mesh = selectedObjects[0];
+    transformControls.attach(mesh);
+    transformControls.visible = true;
+    // 重置scale避免累积
+    try {
+      mesh.scale.set(1,1,1);
+    } catch(e) {
+      console.warn('Failed to reset mesh scale on select:', e);
+    }
+  }
+}
+
+// 更新所有选中对象的变换
+function updateSelectedObjectsTransform() {
+  if (selectedObjects.length === 0) return;
+  
+  if (selectedObjects.length === 1) {
+    // 单选情况，直接更新
+    updateObjectTransform(selectedObjects[0]);
+  } else {
+    // 多选情况，需要特殊处理
+    updateMultipleObjectsTransform();
+  }
+}
+
+// 多选对象的初始位置记录
+let multiSelectInitialPositions = new Map();
+let multiSelectInitialRotations = new Map();
+let multiSelectInitialScales = new Map();
+
+// 记录多选对象的初始变换状态
+function recordMultiSelectInitialTransforms() {
+  multiSelectInitialPositions.clear();
+  multiSelectInitialRotations.clear();
+  multiSelectInitialScales.clear();
+  
+  selectedObjects.forEach(mesh => {
+    multiSelectInitialPositions.set(mesh, mesh.position.clone());
+    multiSelectInitialRotations.set(mesh, mesh.rotation.clone());
+    multiSelectInitialScales.set(mesh, mesh.scale.clone());
+  });
+}
+
+// 处理多选对象的变换更新
+function updateMultipleObjectsTransform() {
+  console.log('Updating multiple objects transform');
+  const mode = transformControls ? transformControls.getMode() : 'translate';
+  
+  if (selectedObjects.length <= 1) {
+    updateObjectTransform(selectedObjects[0]);
+    return;
+  }
+  
+  const primaryMesh = selectedObjects[0]; // 主控对象
+  const primaryInitialPos = multiSelectInitialPositions.get(primaryMesh);
+  const primaryInitialRot = multiSelectInitialRotations.get(primaryMesh);
+  const primaryInitialScale = multiSelectInitialScales.get(primaryMesh);
+  
+  if (!primaryInitialPos || !primaryInitialRot || !primaryInitialScale) {
+    console.warn('Primary mesh initial transform not recorded');
+    return;
+  }
+  
+  // 计算主控对象的变换增量
+  const deltaPos = new THREE.Vector3().subVectors(primaryMesh.position, primaryInitialPos);
+  const deltaRot = new THREE.Euler().setFromVector3(
+    new THREE.Vector3().subVectors(
+      new THREE.Vector3(primaryMesh.rotation.x, primaryMesh.rotation.y, primaryMesh.rotation.z),
+      new THREE.Vector3(primaryInitialRot.x, primaryInitialRot.y, primaryInitialRot.z)
+    )
+  );
+  const deltaScale = new THREE.Vector3().subVectors(primaryMesh.scale, primaryInitialScale);
+  
+  // 应用变换到所有选中对象
+  selectedObjects.forEach((mesh, index) => {
+    if (index === 0) {
+      // 主控对象，直接更新
+      updateObjectTransform(mesh);
+    } else {
+      // 从属对象，应用相同的变换增量
+      const initialPos = multiSelectInitialPositions.get(mesh);
+      const initialRot = multiSelectInitialRotations.get(mesh);
+      const initialScale = multiSelectInitialScales.get(mesh);
+      
+      if (initialPos && initialRot && initialScale) {
+        if (mode === 'translate') {
+          mesh.position.copy(initialPos).add(deltaPos);
+        } else if (mode === 'rotate') {
+          mesh.rotation.setFromVector3(
+            new THREE.Vector3(initialRot.x, initialRot.y, initialRot.z).add(
+              new THREE.Vector3(deltaRot.x, deltaRot.y, deltaRot.z)
+            )
+          );
+        } else if (mode === 'scale') {
+          mesh.scale.copy(initialScale).add(deltaScale);
+        }
+        
+        updateObjectTransform(mesh);
+      }
+    }
+  });
+  
+  // 多选完成后统一更新JSON编辑器
+  updateJsonTextarea();
+  
+  console.log(`多选物体变换更新: 模式=${mode}, 对象数量=${selectedObjects.length}`);
 }
 
 function updateObjectTransform(mesh) {
@@ -534,16 +688,6 @@ function updateObjectTransform(mesh) {
       // 同步originalData引用
       mesh.userData.originalData = target;
       mesh.userData.objectIndex = objIndex;
-
-      // 更新JSON编辑器中的内容
-      const textarea = document.getElementById('jsonTextarea');
-      console.log('Textarea found:', !!textarea);
-      if (textarea) {
-        textarea.value = JSON.stringify(currentJsonData, null, 2);
-        console.log('JSON textarea updated successfully');
-      } else {
-        console.warn('JSON textarea not found');
-      }
     } else {
       console.warn('Object not found in currentJsonData.objects');
     }
@@ -551,7 +695,26 @@ function updateObjectTransform(mesh) {
     console.warn('currentJsonData or currentJsonData.objects is null/undefined');
   }
 
+  // 在多选更新完成后统一更新JSON编辑器
+  if (selectedObjects.length <= 1) {
+    updateJsonTextarea();
+  }
+
   console.log(`物体变换更新: 模式=${mode}`);
+}
+
+// 统一更新JSON编辑器内容
+function updateJsonTextarea() {
+  const textarea = document.getElementById('jsonTextarea');
+  console.log('Textarea found:', !!textarea);
+  if (textarea && currentJsonData) {
+    isProgrammaticJsonUpdate = true;
+    textarea.value = JSON.stringify(currentJsonData, null, 2);
+    isProgrammaticJsonUpdate = false;
+    console.log('JSON textarea updated successfully');
+  } else {
+    console.warn('JSON textarea not found or currentJsonData missing');
+  }
 }
 
 // 已移除切换编辑模式逻辑，始终为编辑模式
@@ -605,7 +768,7 @@ function cleanUpExistingScene() {
   window.removeEventListener('keydown', onKeyDown);
 
   // 清理选择状态
-  selectedObject = null;
+  selectedObjects.length = 0;
   selectableObjects.length = 0;
 
   // Dispose and remove all objects from objectsWithLabels array
@@ -724,7 +887,7 @@ function initUI(initialData) {
   // 固定为编辑模式的提示
   const info = document.getElementById('info');
   if (info) {
-    info.innerHTML = '编辑模式: 点击Box显示编辑轴 | G=移动 R=旋转 S=缩放 ESC=取消选择<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)';
+    info.innerHTML = '编辑模式: 点击Box选择 | Shift+点击多选 | G=移动 R=旋转 S=缩放 ESC=取消选择<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)';
   }
 
   const editor = document.getElementById('jsonEditor');
