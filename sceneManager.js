@@ -14,7 +14,7 @@ const selectableObjects = []; // 可选择的物体数组
 // let labelsVisible removed; use per-field visibility
 let showName = true;
 let animationFrameId = null;
-let isEditMode = false; // 编辑模式开关
+let isEditMode = true; // 始终处于编辑模式
 let currentJsonData = null; // 当前的JSON数据，用于实时更新
 let selectedObject = null; // 当前选中的物体
 let raycaster, mouse; // 用于射线检测点击
@@ -294,7 +294,7 @@ function createObject(objData, objectIndex) {
       const key = `${objData.name || 'Object'}#${objectIndex}`;
       colorValue = getDeterministicColorForKey(key);
     }
-    const mat = new THREE.MeshStandardMaterial({ color: colorValue, roughness: 0.7 });
+    const mat = new THREE.MeshStandardMaterial({ color: colorValue, roughness: 0.7, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(geo, mat);
     const posVec = position.map(p => p * posUnitFactor);
     mesh.position.set(...posVec);
@@ -373,13 +373,18 @@ function initMouseInteraction() {
 
   // 添加点击事件监听器
   renderer.domElement.addEventListener('click', onMouseClick, false);
+  // 同时监听 pointerdown 提高命中可靠性（防止轻微移动导致 click 不触发）
+  renderer.domElement.addEventListener('pointerdown', onMouseClick, false);
   
   // 添加键盘事件监听器用于切换模式
   window.addEventListener('keydown', onKeyDown, false);
 }
 
 function onMouseClick(event) {
-  if (!isEditMode) return;
+  // 若当前正在拖拽 TransformControls，则不进行选中命中
+  if (transformControls && transformControls.dragging) return;
+  // 仅处理左键
+  if (event.button !== undefined && event.button !== 0) return;
 
   // 计算鼠标位置
   const rect = renderer.domElement.getBoundingClientRect();
@@ -389,6 +394,7 @@ function onMouseClick(event) {
   // 射线检测
   raycaster.setFromCamera(mouse, camera);
   const intersects = raycaster.intersectObjects(selectableObjects);
+  console.log('Raycast hits:', intersects.length);
 
   if (intersects.length > 0) {
     const clickedObject = intersects[0].object;
@@ -400,7 +406,7 @@ function onMouseClick(event) {
 }
 
 function onKeyDown(event) {
-  if (!isEditMode || !selectedObject) return;
+  if (!selectedObject) return;
 
   switch (event.key) {
     case 'g': // G键切换到移动模式
@@ -548,30 +554,7 @@ function updateObjectTransform(mesh) {
   console.log(`物体变换更新: 模式=${mode}`);
 }
 
-function toggleEditMode() {
-  isEditMode = !isEditMode;
-  
-  const button = document.getElementById('dragModeToggle');
-  if (button) {
-    button.textContent = isEditMode ? '退出编辑' : '编辑模式';
-    button.classList.toggle('active', isEditMode);
-  }
-
-  // 如果退出编辑模式，取消当前选择
-  if (!isEditMode) {
-    deselectObject();
-  }
-
-  // 更新info提示
-  const info = document.getElementById('info');
-  if (info && isEditMode) {
-    info.innerHTML = '编辑模式: 点击Box显示编辑轴 | G=移动 R=旋转 S=缩放 ESC=取消选择<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)';
-  } else if (info && !isEditMode) {
-    info.innerHTML = '交互: 左键拖动 - 旋转视角 | 鼠标滚轮 - 缩放 | 右键拖动 - 平移<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)';
-  }
-
-  console.log(`编辑模式 ${isEditMode ? '启用' : '禁用'}`);
-}
+// 已移除切换编辑模式逻辑，始终为编辑模式
 
 /******************************
  * 清理资源
@@ -738,51 +721,10 @@ function onResize() {
 function initUI(initialData) {
   console.log("Initializing UI...");
   
-  // 编辑模式按钮
-  const editModeButton = document.getElementById('dragModeToggle');
-  if(editModeButton){
-      editModeButton.onclick = toggleEditMode;
-      // 初始化按钮文本
-      editModeButton.textContent = isEditMode ? '退出编辑' : '编辑模式';
-      editModeButton.classList.toggle('active', isEditMode);
-  } else {
-      console.warn("Edit mode button not found.");
-  }
-  
-  const toggleLabelsButton = document.getElementById('toggleLabels');
-  if(toggleLabelsButton){
-      toggleLabelsButton.onclick = () => {
-        // 切换所有标签字段的显示状态
-        const allHidden = !showName && !showPosition && !showRotation && !showScale && !showDistance;
-        const newVisibility = allHidden; // 如果全部隐藏，则显示所有；否则隐藏所有
-        
-        showName = newVisibility;
-        showPosition = newVisibility;
-        showRotation = newVisibility;
-        showScale = newVisibility;
-        showDistance = newVisibility;
-        
-        // 更新复选框状态
-        const labelNameCb = document.getElementById('labelNameCb');
-        const labelPosCb = document.getElementById('labelPosCb');
-        const labelRotCb = document.getElementById('labelRotCb');
-        const labelScaleCb = document.getElementById('labelScaleCb');
-        const labelDistCb = document.getElementById('labelDistCb');
-        
-        if(labelNameCb) labelNameCb.checked = showName;
-        if(labelPosCb) labelPosCb.checked = showPosition;
-        if(labelRotCb) labelRotCb.checked = showRotation;
-        if(labelScaleCb) labelScaleCb.checked = showScale;
-        if(labelDistCb) labelDistCb.checked = showDistance;
-        
-        // 更新标签显示
-        objectsWithLabels.forEach(updateLabel);
-        
-        toggleLabelsButton.textContent = newVisibility ? '隐藏标签' : '显示标签';
-        console.log(`Labels visibility toggled to: ${newVisibility}`);
-      };
-  } else {
-      console.warn("Toggle labels button not found.");
+  // 固定为编辑模式的提示
+  const info = document.getElementById('info');
+  if (info) {
+    info.innerHTML = '编辑模式: 点击Box显示编辑轴 | G=移动 R=旋转 S=缩放 ESC=取消选择<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)';
   }
 
   const editor = document.getElementById('jsonEditor');
