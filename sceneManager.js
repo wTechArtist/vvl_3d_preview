@@ -21,6 +21,7 @@ let raycaster, mouse; // 用于射线检测点击
 let isProgrammaticJsonUpdate = false; // 程序化更新textarea时抑制oninput
 let autoShowLabelsTimer = null; // 自动显示所有标签的定时器
 let showAllLabelsMode = false; // 是否显示所有标签模式（选中3秒后自动触发）
+let autoShowLabelsDelay = 1000; // 自动显示所有标签的延迟时间（毫秒），默认3秒
 
 function setTransformSnapFromUnits() {
   if (transformControls) {
@@ -44,10 +45,10 @@ function startAutoShowLabelsTimer() {
   if (selectedObjects.length > 0) {
     autoShowLabelsTimer = setTimeout(() => {
       showAllLabelsMode = true;
-      console.log('3秒已过，自动显示所有标签模式启动');
+      console.log(`${autoShowLabelsDelay/1000}秒已过，自动显示所有标签模式启动`);
       // 刷新所有标签显示
       objectsWithLabels.forEach(updateLabel);
-    }, 3000);
+    }, autoShowLabelsDelay);
   }
 }
 
