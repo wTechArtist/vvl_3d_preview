@@ -19,12 +19,45 @@ let currentJsonData = null; // 当前的JSON数据，用于实时更新
 let selectedObjects = []; // 当前选中的物体数组（支持多选）
 let raycaster, mouse; // 用于射线检测点击
 let isProgrammaticJsonUpdate = false; // 程序化更新textarea时抑制oninput
+let autoShowLabelsTimer = null; // 自动显示所有标签的定时器
+let showAllLabelsMode = false; // 是否显示所有标签模式（选中3秒后自动触发）
 
 function setTransformSnapFromUnits() {
   if (transformControls) {
     const snapWorld = 0.01 * posUnitFactor; // JSON最小单位0.01 → Three单位
     try { transformControls.setTranslationSnap(snapWorld); } catch(e) { /* older versions may differ */ }
   }
+}
+
+// 启动自动显示所有标签的定时器（3秒后）
+function startAutoShowLabelsTimer() {
+  // 清除现有定时器
+  if (autoShowLabelsTimer) {
+    clearTimeout(autoShowLabelsTimer);
+    autoShowLabelsTimer = null;
+  }
+  
+  // 重置模式
+  showAllLabelsMode = false;
+  
+  // 只有在有选中对象时才启动定时器
+  if (selectedObjects.length > 0) {
+    autoShowLabelsTimer = setTimeout(() => {
+      showAllLabelsMode = true;
+      console.log('3秒已过，自动显示所有标签模式启动');
+      // 刷新所有标签显示
+      objectsWithLabels.forEach(updateLabel);
+    }, 3000);
+  }
+}
+
+// 清除自动显示所有标签的定时器
+function clearAutoShowLabelsTimer() {
+  if (autoShowLabelsTimer) {
+    clearTimeout(autoShowLabelsTimer);
+    autoShowLabelsTimer = null;
+  }
+  showAllLabelsMode = false;
 }
 
 // --- 颜色解析与确定性颜色 ---
@@ -466,6 +499,9 @@ function selectSingleObject(mesh) {
   // 刷新所有标签，仅显示选中对象
   objectsWithLabels.forEach(updateLabel);
   
+  // 启动3秒自动显示所有标签定时器
+  startAutoShowLabelsTimer();
+  
   console.log(`选中物体: ${mesh.userData.originalData?.name || 'Unknown'}`);
 }
 
@@ -493,6 +529,9 @@ function toggleObjectSelection(mesh) {
   updateTransformControls();
   // 刷新所有标签，仅显示选中对象
   objectsWithLabels.forEach(updateLabel);
+  
+  // 重新启动3秒自动显示所有标签定时器（如果还有选中对象）
+  startAutoShowLabelsTimer();
 }
 
 // 取消所有选择
@@ -506,6 +545,9 @@ function deselectAllObjects() {
   selectedObjects.length = 0;
   transformControls.detach();
   transformControls.visible = false;
+  
+  // 清除自动显示所有标签的定时器
+  clearAutoShowLabelsTimer();
   
   console.log('取消所有选择');
   // 取消选择后恢复标签显示
@@ -757,6 +799,11 @@ function cleanUpExistingScene() {
     animationFrameId = null;
     console.log("Cancelled animation frame.");
   }
+  
+  // 清理自动显示标签定时器
+  clearAutoShowLabelsTimer();
+  console.log("Cleared auto show labels timer.");
+  
   window.removeEventListener('resize', onResize);
   console.log("Removed resize listener.");
 
@@ -865,10 +912,26 @@ function updateLabel(o) {
         lines.push(`距离: ${dist}`);
     }
     o.labelDiv.innerHTML = lines.join('<br>');
-    // 有选中对象时，仅显示被选中的对象标签；无选中时按原逻辑
+    
+    // 标签可见性逻辑：
+    // 1. 如果处于自动显示所有标签模式，显示所有标签
+    // 2. 有选中对象且不在自动显示模式时，仅显示被选中的对象标签
+    // 3. 无选中时按原逻辑显示所有标签
     const hasSelection = Array.isArray(selectedObjects) && selectedObjects.length > 0;
-    const isSelected = !hasSelection || selectedObjects.includes(o.mesh);
-    o.labelObj.visible = (lines.length > 0) && isSelected;
+    let shouldShowLabel = false;
+    
+    if (showAllLabelsMode) {
+      // 自动显示所有标签模式
+      shouldShowLabel = true;
+    } else if (hasSelection) {
+      // 有选中对象时，仅显示选中的
+      shouldShowLabel = selectedObjects.includes(o.mesh);
+    } else {
+      // 无选中时显示所有
+      shouldShowLabel = true;
+    }
+    
+    o.labelObj.visible = (lines.length > 0) && shouldShowLabel;
   } catch(e){
       console.warn("Error updating label for object:", o.data.name, e);
       o.labelDiv.innerHTML = `${o.data.name || 'N/A'}<br>Error updating label.`;
