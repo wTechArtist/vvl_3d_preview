@@ -463,6 +463,8 @@ function selectSingleObject(mesh) {
 
   // 将变换控制器附加到选中的物体
   updateTransformControls();
+  // 刷新所有标签，仅显示选中对象
+  objectsWithLabels.forEach(updateLabel);
   
   console.log(`选中物体: ${mesh.userData.originalData?.name || 'Unknown'}`);
 }
@@ -489,6 +491,8 @@ function toggleObjectSelection(mesh) {
   }
   
   updateTransformControls();
+  // 刷新所有标签，仅显示选中对象
+  objectsWithLabels.forEach(updateLabel);
 }
 
 // 取消所有选择
@@ -504,6 +508,8 @@ function deselectAllObjects() {
   transformControls.visible = false;
   
   console.log('取消所有选择');
+  // 取消选择后恢复标签显示
+  objectsWithLabels.forEach(updateLabel);
 }
 
 // 更新TransformControls的附加对象
@@ -859,7 +865,10 @@ function updateLabel(o) {
         lines.push(`距离: ${dist}`);
     }
     o.labelDiv.innerHTML = lines.join('<br>');
-    o.labelObj.visible = lines.length > 0;
+    // 有选中对象时，仅显示被选中的对象标签；无选中时按原逻辑
+    const hasSelection = Array.isArray(selectedObjects) && selectedObjects.length > 0;
+    const isSelected = !hasSelection || selectedObjects.includes(o.mesh);
+    o.labelObj.visible = (lines.length > 0) && isSelected;
   } catch(e){
       console.warn("Error updating label for object:", o.data.name, e);
       o.labelDiv.innerHTML = `${o.data.name || 'N/A'}<br>Error updating label.`;
