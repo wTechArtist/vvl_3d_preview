@@ -102,6 +102,19 @@ function roundTo(value, decimals = 2) {
   return Math.round(value * factor) / factor;
 }
 
+// --- 焦距和FOV转换函数 ---
+// 根据焦距计算FOV（度）
+function focalLengthToFOV(focalLength, sensorWidth = 36) {
+  const fovRadians = 2 * Math.atan(sensorWidth / (2 * focalLength));
+  return THREE.MathUtils.radToDeg(fovRadians);
+}
+
+// 根据FOV计算焦距（mm）
+function fovToFocalLength(fovDegrees, sensorWidth = 36) {
+  const fovRadians = THREE.MathUtils.degToRad(fovDegrees);
+  return sensorWidth / (2 * Math.tan(fovRadians / 2));
+}
+
 // --- 单位系统设置 ---
 // 位置倍率: UE 单位(厘米) × posUnitFactor → Three.js 单位
 let posUnitFactor = 1;
@@ -109,6 +122,9 @@ let posUnitFactor = 1;
 let scaleUnitFactor = 100;
 // 旋转单位: 'deg' 或 'rad'
 let rotationUnit = 'deg';
+// --- 相机焦距设置 ---
+let focalLength = 35; // 焦距(mm)
+const sensorWidth = 36; // 传感器宽度(mm) - 35mm全画幅标准
 // --- 颜色设置 ---
 let useRandomColor = true;
 let customColor = 0xffffff;
@@ -118,6 +134,98 @@ let showPosition = false;
 let showRotation = false;
 let showScale = false;
 let showDistance = false;
+
+// --- 深度预览模式 ---
+let depthPreviewMode = false;
+const originalMaterials = new Map(); // 保存原始材质
+
+// 切换深度预览模式
+function toggleDepthPreview(enabled) {
+  depthPreviewMode = enabled;
+
+  if (!camera) {
+    console.warn('Camera not initialized');
+    return;
+  }
+
+  if (enabled) {
+    // 计算场景中所有物体到相机的距离范围
+    let minDist = Infinity;
+    let maxDist = -Infinity;
+
+    selectableObjects.forEach(mesh => {
+      const dist = camera.position.distanceTo(mesh.position);
+      minDist = Math.min(minDist, dist);
+      maxDist = Math.max(maxDist, dist);
+    });
+
+    // 扩展范围5%以避免边界情况
+    const range = maxDist - minDist;
+    minDist -= range * 0.05;
+    maxDist += range * 0.05;
+
+    console.log(`深度范围: ${minDist.toFixed(2)} - ${maxDist.toFixed(2)}`);
+
+    selectableObjects.forEach(mesh => {
+      // 保存原始材质并切换到深度材质
+      if (!originalMaterials.has(mesh)) {
+        originalMaterials.set(mesh, mesh.material);
+      }
+
+      // 使用自定义ShaderMaterial来可视化深度
+      const depthMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+          minDepth: { value: minDist },
+          maxDepth: { value: maxDist },
+          cameraPos: { value: camera.position.clone() }
+        },
+        vertexShader: `
+          varying vec3 vWorldPosition;
+          void main() {
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            vWorldPosition = worldPosition.xyz;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform float minDepth;
+          uniform float maxDepth;
+          uniform vec3 cameraPos;
+          varying vec3 vWorldPosition;
+
+          void main() {
+            // 计算到相机的距离
+            float depth = distance(vWorldPosition, cameraPos);
+
+            // 归一化深度值 (0.0 = 近, 1.0 = 远)
+            float normalizedDepth = (depth - minDepth) / (maxDepth - minDepth);
+            normalizedDepth = clamp(normalizedDepth, 0.0, 1.0);
+
+            // 黑白渐变: 黑色(近) 到 白色(远)
+            vec3 color = vec3(normalizedDepth);
+
+            gl_FragColor = vec4(color, 1.0);
+          }
+        `,
+        side: THREE.DoubleSide
+      });
+
+      mesh.material = depthMaterial;
+      console.log(`切换到深度材质: ${mesh.userData?.name || 'Unknown'}, 距离: ${camera.position.distanceTo(mesh.position).toFixed(2)}`);
+    });
+  } else {
+    // 恢复原始材质
+    selectableObjects.forEach(mesh => {
+      const originalMaterial = originalMaterials.get(mesh);
+      if (originalMaterial) {
+        mesh.material = originalMaterial;
+        console.log(`恢复原始材质: ${mesh.userData?.name || 'Unknown'}`);
+      }
+    });
+  }
+
+  console.log(`深度预览模式: ${enabled ? '开启' : '关闭'}`);
+}
 
 /******************************
  * 默认数据（作为后备）
@@ -334,10 +442,13 @@ function createObject(objData, objectIndex) {
     mesh.position.set(...posVec);
     const rotVec = rotationUnit === 'deg' ? rotation.map(r => THREE.MathUtils.degToRad(r)) : rotation;
     mesh.rotation.set(...rotVec);
-    
+
     // 给mesh添加userData来保存原始数据引用与稳定索引
     mesh.userData = { originalData: objData, objectIndex, name: objData.name };
-    
+
+    // 保存原始材质（用于深度预览切换）
+    originalMaterials.set(mesh, mat);
+
     mirrorRoot.add(mesh);
     selectableObjects.push(mesh); // 添加到可选择对象数组
 
@@ -825,6 +936,10 @@ function cleanUpExistingScene() {
   selectedObjects.length = 0;
   selectableObjects.length = 0;
 
+  // 清理深度预览相关
+  depthPreviewMode = false;
+  originalMaterials.clear();
+
   // Dispose and remove all objects from objectsWithLabels array
   while(objectsWithLabels.length > 0){
       const item = objectsWithLabels.pop();
@@ -875,6 +990,39 @@ function animate() {
   animationFrameId = requestAnimationFrame(animate);
   try {
     if (controls) controls.update();
+
+    // 更新深度预览材质的相机位置和深度范围
+    if (depthPreviewMode && camera) {
+      // 重新计算深度范围
+      let minDist = Infinity;
+      let maxDist = -Infinity;
+
+      selectableObjects.forEach(mesh => {
+        const dist = camera.position.distanceTo(mesh.position);
+        minDist = Math.min(minDist, dist);
+        maxDist = Math.max(maxDist, dist);
+      });
+
+      // 扩展范围5%
+      const range = maxDist - minDist;
+      minDist -= range * 0.05;
+      maxDist += range * 0.05;
+
+      // 更新所有深度材质的uniforms
+      selectableObjects.forEach(mesh => {
+        if (mesh.material.uniforms) {
+          if (mesh.material.uniforms.cameraPos) {
+            mesh.material.uniforms.cameraPos.value.copy(camera.position);
+          }
+          if (mesh.material.uniforms.minDepth) {
+            mesh.material.uniforms.minDepth.value = minDist;
+          }
+          if (mesh.material.uniforms.maxDepth) {
+            mesh.material.uniforms.maxDepth.value = maxDist;
+          }
+        }
+      });
+    }
 
     if (scene && camera && renderer) { // Ensure core components exist
         objectsWithLabels.forEach(o => updateLabel(o));
@@ -972,6 +1120,9 @@ function initUI(initialData) {
   const posUnitInput = document.getElementById('posUnitInput');
   const scaleUnitInput = document.getElementById('scaleUnitInput');
   const rotUnitSelect = document.getElementById('rotUnitSelect');
+  const focalLengthInput = document.getElementById('focalLengthInput');
+  const fovInput = document.getElementById('fovInput');
+  const depthPreviewCheckbox = document.getElementById('depthPreviewCheckbox');
   // const applyUnitSettings button removed;
   const randomColorCheckbox = document.getElementById('randomColorCheckbox');
   const colorPicker = document.getElementById('colorPicker');
@@ -990,6 +1141,49 @@ function initUI(initialData) {
   if(labelRotCb) labelRotCb.checked = showRotation;
   if(labelScaleCb) labelScaleCb.checked = showScale;
   if(labelDistCb) labelDistCb.checked = showDistance;
+
+  // 初始化焦距和FOV
+  if (camera && focalLengthInput && fovInput) {
+    // 从相机的当前FOV计算初始焦距
+    const currentFOV = camera.fov;
+    focalLength = roundTo(fovToFocalLength(currentFOV, sensorWidth), 1);
+    focalLengthInput.value = focalLength;
+    fovInput.value = roundTo(currentFOV, 1);
+
+    // 焦距改变时更新FOV和相机
+    focalLengthInput.oninput = () => {
+      const newFocalLength = parseFloat(focalLengthInput.value);
+      if (!isNaN(newFocalLength) && newFocalLength > 0) {
+        focalLength = newFocalLength;
+        const newFOV = focalLengthToFOV(focalLength, sensorWidth);
+        fovInput.value = roundTo(newFOV, 1);
+        camera.fov = newFOV;
+        camera.updateProjectionMatrix();
+        console.log(`焦距: ${focalLength}mm → FOV: ${roundTo(newFOV, 1)}°`);
+      }
+    };
+
+    // FOV改变时更新焦距和相机
+    fovInput.oninput = () => {
+      const newFOV = parseFloat(fovInput.value);
+      if (!isNaN(newFOV) && newFOV > 0 && newFOV < 180) {
+        const newFocalLength = fovToFocalLength(newFOV, sensorWidth);
+        focalLength = roundTo(newFocalLength, 1);
+        focalLengthInput.value = focalLength;
+        camera.fov = newFOV;
+        camera.updateProjectionMatrix();
+        console.log(`FOV: ${roundTo(newFOV, 1)}° → 焦距: ${focalLength}mm`);
+      }
+    };
+  }
+
+  // 深度预览复选框
+  if (depthPreviewCheckbox) {
+    depthPreviewCheckbox.checked = depthPreviewMode;
+    depthPreviewCheckbox.onchange = () => {
+      toggleDepthPreview(depthPreviewCheckbox.checked);
+    };
+  }
 
   if(colorPicker){
       const colHex = '#' + customColor.toString(16).padStart(6,'0');
