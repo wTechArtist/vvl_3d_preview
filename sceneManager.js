@@ -137,7 +137,169 @@ let showDistance = false;
 
 // --- 深度预览模式 ---
 let depthPreviewMode = false;
+let depthInvert = false; // 深度反相开关
 const originalMaterials = new Map(); // 保存原始材质
+
+/******************************
+ * 初始化折叠面板
+ ******************************/
+function initCollapsiblePanels() {
+  // 处理info面板
+  const info = document.getElementById('info');
+  if (info) {
+    const originalContent = info.innerHTML;
+    info.innerHTML = `
+      <div id="infoHeader" style="padding: 5px 10px; background-color: rgba(50,50,50,0.9); cursor: move; font-weight: bold; display: flex; justify-content: space-between; align-items: center; user-select: none;">
+        <span>信息</span>
+        <span id="infoCollapseIcon" style="cursor: pointer;">▼</span>
+      </div>
+      <div id="infoContent" style="padding: 10px;">
+        ${originalContent}
+      </div>
+    `;
+
+    // 绑定折叠事件
+    const infoHeader = document.getElementById('infoHeader');
+    const infoIcon = document.getElementById('infoCollapseIcon');
+    if (infoHeader && infoIcon) {
+      // 折叠功能 - 只在点击图标时触发
+      infoIcon.onclick = (e) => {
+        e.stopPropagation(); // 防止触发拖动
+        info.classList.toggle('collapsed');
+        infoIcon.textContent = info.classList.contains('collapsed') ? '▲' : '▼';
+      };
+
+      // 拖动功能
+      let isDragging = false;
+      let startX, startY, startLeft, startTop;
+
+      infoHeader.onmousedown = (e) => {
+        // 如果点击的是折叠图标，不启动拖动
+        if (e.target === infoIcon) {
+          return;
+        }
+
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+
+        // 获取当前位置
+        const rect = info.getBoundingClientRect();
+        startLeft = rect.left;
+        startTop = rect.top;
+
+        // 改为使用 left/top 定位以便拖动
+        info.style.right = 'auto';
+        info.style.bottom = 'auto';
+        info.style.left = startLeft + 'px';
+        info.style.top = startTop + 'px';
+
+        e.preventDefault();
+      };
+
+      document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+
+        const deltaX = e.clientX - startX;
+        const deltaY = e.clientY - startY;
+
+        const newLeft = startLeft + deltaX;
+        const newTop = startTop + deltaY;
+
+        // 限制在窗口范围内
+        const maxLeft = window.innerWidth - info.offsetWidth;
+        const maxTop = window.innerHeight - info.offsetHeight;
+
+        info.style.left = Math.max(0, Math.min(newLeft, maxLeft)) + 'px';
+        info.style.top = Math.max(0, Math.min(newTop, maxTop)) + 'px';
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (isDragging) {
+          isDragging = false;
+        }
+      });
+    }
+  }
+
+  // 处理unitSettings面板
+  const unitSettings = document.getElementById('unitSettings');
+  if (unitSettings) {
+    const originalContent = unitSettings.innerHTML;
+    unitSettings.innerHTML = `
+      <div id="unitSettingsHeader" style="padding: 5px 10px; background-color: rgba(50,50,50,0.9); cursor: move; font-weight: bold; display: flex; justify-content: space-between; align-items: center; user-select: none;">
+        <span>设置</span>
+        <span id="unitSettingsCollapseIcon" style="cursor: pointer;">▼</span>
+      </div>
+      <div id="unitSettingsContent" style="padding: 8px 10px;">
+        ${originalContent}
+      </div>
+    `;
+
+    // 绑定折叠事件
+    const unitSettingsHeader = document.getElementById('unitSettingsHeader');
+    const unitSettingsIcon = document.getElementById('unitSettingsCollapseIcon');
+    if (unitSettingsHeader && unitSettingsIcon) {
+      // 折叠功能 - 只在点击图标时触发
+      unitSettingsIcon.onclick = (e) => {
+        e.stopPropagation(); // 防止触发拖动
+        unitSettings.classList.toggle('collapsed');
+        unitSettingsIcon.textContent = unitSettings.classList.contains('collapsed') ? '▲' : '▼';
+      };
+
+      // 拖动功能
+      let isDragging = false;
+      let startX, startY, startLeft, startTop;
+
+      unitSettingsHeader.onmousedown = (e) => {
+        // 如果点击的是折叠图标，不启动拖动
+        if (e.target === unitSettingsIcon) {
+          return;
+        }
+
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+
+        // 获取当前位置
+        const rect = unitSettings.getBoundingClientRect();
+        startLeft = rect.left;
+        startTop = rect.top;
+
+        // 改为使用 left/top 定位以便拖动
+        unitSettings.style.right = 'auto';
+        unitSettings.style.bottom = 'auto';
+        unitSettings.style.left = startLeft + 'px';
+        unitSettings.style.top = startTop + 'px';
+
+        e.preventDefault();
+      };
+
+      document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+
+        const deltaX = e.clientX - startX;
+        const deltaY = e.clientY - startY;
+
+        const newLeft = startLeft + deltaX;
+        const newTop = startTop + deltaY;
+
+        // 限制在窗口范围内
+        const maxLeft = window.innerWidth - unitSettings.offsetWidth;
+        const maxTop = window.innerHeight - unitSettings.offsetHeight;
+
+        unitSettings.style.left = Math.max(0, Math.min(newLeft, maxLeft)) + 'px';
+        unitSettings.style.top = Math.max(0, Math.min(newTop, maxTop)) + 'px';
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (isDragging) {
+          isDragging = false;
+        }
+      });
+    }
+  }
+}
 
 // 切换深度预览模式
 function toggleDepthPreview(enabled) {
@@ -177,7 +339,8 @@ function toggleDepthPreview(enabled) {
         uniforms: {
           minDepth: { value: minDist },
           maxDepth: { value: maxDist },
-          cameraPos: { value: camera.position.clone() }
+          cameraPos: { value: camera.position.clone() },
+          invertDepth: { value: depthInvert ? 1.0 : 0.0 }
         },
         vertexShader: `
           varying vec3 vWorldPosition;
@@ -191,6 +354,7 @@ function toggleDepthPreview(enabled) {
           uniform float minDepth;
           uniform float maxDepth;
           uniform vec3 cameraPos;
+          uniform float invertDepth;
           varying vec3 vWorldPosition;
 
           void main() {
@@ -201,7 +365,13 @@ function toggleDepthPreview(enabled) {
             float normalizedDepth = (depth - minDepth) / (maxDepth - minDepth);
             normalizedDepth = clamp(normalizedDepth, 0.0, 1.0);
 
-            // 黑白渐变: 黑色(近) 到 白色(远)
+            // 默认: 近白远黑 (反转深度值)
+            // 反相: 近黑远白 (不反转)
+            if (invertDepth < 0.5) {
+              normalizedDepth = 1.0 - normalizedDepth;
+            }
+
+            // 黑白渐变
             vec3 color = vec3(normalizedDepth);
 
             gl_FragColor = vec4(color, 1.0);
@@ -227,6 +397,20 @@ function toggleDepthPreview(enabled) {
   console.log(`深度预览模式: ${enabled ? '开启' : '关闭'}`);
 }
 
+// 更新深度反相
+function updateDepthInvert(invert) {
+  depthInvert = invert;
+
+  // 更新所有深度材质的invertDepth uniform
+  selectableObjects.forEach(mesh => {
+    if (mesh.material.uniforms && mesh.material.uniforms.invertDepth !== undefined) {
+      mesh.material.uniforms.invertDepth.value = invert ? 1.0 : 0.0;
+    }
+  });
+
+  console.log(`深度反相: ${invert ? '开启' : '关闭'}`);
+}
+
 /******************************
  * 默认数据（作为后备）
  ******************************/
@@ -244,6 +428,10 @@ const defaultData = {
  ******************************/
 export async function boot() {
   console.log("Booting application...");
+
+  // 初始化折叠面板
+  initCollapsiblePanels();
+
   const jsonData = await loadSceneData();
   currentJsonData = JSON.parse(JSON.stringify(jsonData)); // 深拷贝保存当前数据
   initScene(currentJsonData); 
@@ -302,7 +490,7 @@ async function loadSceneData() {
   console.log("Loading scene data...");
   if (window.location.protocol === 'file:') {
     console.warn('Using file:// protocol, returning default data.');
-    document.getElementById('info').innerHTML = '使用内置数据 (file://协议)。如需加载外部JSON, 请通过HTTP服务器访问。';
+    updateInfoContent('使用内置数据 (file://协议)。如需加载外部JSON, 请通过HTTP服务器访问。');
     return defaultData;
   }
   const paths = [
@@ -317,7 +505,7 @@ async function loadSceneData() {
       if (res.ok) {
         const data = await res.json();
         console.log(`Successfully loaded JSON data from: ${path}`, data);
-        document.getElementById('info').innerHTML = `从 ${path} 加载数据成功`;
+        updateInfoContent(`从 ${path} 加载数据成功`);
         return data;
       } else {
         console.warn(`Failed to fetch from ${path}, status: ${res.status}`);
@@ -327,8 +515,27 @@ async function loadSceneData() {
     }
   }
   console.error('All fetch attempts failed, returning default data.');
-  document.getElementById('info').innerHTML = '加载外部JSON失败，使用内置数据。';
+  updateInfoContent('加载外部JSON失败，使用内置数据。');
   return defaultData;
+}
+
+// 更新info内容的辅助函数
+function updateInfoContent(message) {
+  const infoContent = document.getElementById('infoContent');
+  if (infoContent) {
+    // 保留原有内容并添加新消息
+    const lines = infoContent.innerHTML.split('<br>');
+    if (lines.length > 2) {
+      lines.splice(2, 1); // 移除旧的加载消息
+    }
+    infoContent.innerHTML = lines[0] + '<br>' + lines[1] + '<br>' + message;
+  } else {
+    // 如果还没有初始化折叠结构，直接设置info
+    const info = document.getElementById('info');
+    if (info) {
+      info.innerHTML = message;
+    }
+  }
 }
 
 /******************************
@@ -938,6 +1145,7 @@ function cleanUpExistingScene() {
 
   // 清理深度预览相关
   depthPreviewMode = false;
+  depthInvert = false;
   originalMaterials.clear();
 
   // Dispose and remove all objects from objectsWithLabels array
@@ -1104,12 +1312,9 @@ function onResize() {
  ******************************/
 function initUI(initialData) {
   console.log("Initializing UI...");
-  
+
   // 固定为编辑模式的提示
-  const info = document.getElementById('info');
-  if (info) {
-    info.innerHTML = '编辑模式: 点击Box选择 | Shift+点击多选 | G=移动 R=旋转 S=缩放 ESC=取消选择<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)';
-  }
+  updateInfoContent('编辑模式: 点击Box选择 | Shift+点击多选 | G=移动 R=旋转 S=缩放 ESC=取消选择<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)');
 
   const editor = document.getElementById('jsonEditor');
   const icon = document.getElementById('expandCollapseIcon');
@@ -1123,6 +1328,8 @@ function initUI(initialData) {
   const focalLengthInput = document.getElementById('focalLengthInput');
   const fovInput = document.getElementById('fovInput');
   const depthPreviewCheckbox = document.getElementById('depthPreviewCheckbox');
+  const depthInvertContainer = document.getElementById('depthInvertContainer');
+  const depthInvertCheckbox = document.getElementById('depthInvertCheckbox');
   // const applyUnitSettings button removed;
   const randomColorCheckbox = document.getElementById('randomColorCheckbox');
   const colorPicker = document.getElementById('colorPicker');
@@ -1181,7 +1388,27 @@ function initUI(initialData) {
   if (depthPreviewCheckbox) {
     depthPreviewCheckbox.checked = depthPreviewMode;
     depthPreviewCheckbox.onchange = () => {
-      toggleDepthPreview(depthPreviewCheckbox.checked);
+      const enabled = depthPreviewCheckbox.checked;
+      toggleDepthPreview(enabled);
+
+      // 显示或隐藏深度反相选项
+      if (depthInvertContainer) {
+        depthInvertContainer.style.display = enabled ? 'block' : 'none';
+      }
+
+      // 关闭深度预览时，重置深度反相
+      if (!enabled && depthInvertCheckbox) {
+        depthInvertCheckbox.checked = false;
+        depthInvert = false;
+      }
+    };
+  }
+
+  // 深度反相复选框
+  if (depthInvertCheckbox) {
+    depthInvertCheckbox.checked = depthInvert;
+    depthInvertCheckbox.onchange = () => {
+      updateDepthInvert(depthInvertCheckbox.checked);
     };
   }
 
@@ -1299,12 +1526,10 @@ function initUI(initialData) {
             if (typeof window.__updateTransformSnap === 'function') {
               try { window.__updateTransformSnap(); } catch(e) {}
             }
-            const info = document.getElementById('info');
-            if (info) info.innerHTML = 'JSON已自动应用 (500ms)';
+            updateInfoContent('JSON已自动应用 (500ms)');
           } catch(e) {
             // 解析失败不重建，提示错误
-            const info = document.getElementById('info');
-            if (info) info.innerHTML = `<strong style="color:orange;">JSON解析失败，未应用: ${e.message}</strong>`;
+            updateInfoContent(`<strong style="color:orange;">JSON解析失败，未应用: ${e.message}</strong>`);
           }
         }, 500);
       };
