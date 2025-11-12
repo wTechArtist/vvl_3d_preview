@@ -1254,7 +1254,10 @@ function updateLabel(o) {
     // 构建标签内容
     const lines = [];
     if(showName){
-        lines.push(o.data.name || 'N/A');
+        // 只显示name的最后一个单词(下划线连接的部分视为一个单词)
+        const fullName = o.data.name || 'N/A';
+        const lastName = fullName.split(/[\s-]+/).filter(s => s.length > 0).pop() || fullName;
+        lines.push(lastName);
     }
     if(showPosition){
         lines.push(`position(cm): [${(o.data.position || [0,0,0]).join(', ')}]`);
