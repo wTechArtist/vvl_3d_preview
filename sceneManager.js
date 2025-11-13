@@ -1248,7 +1248,7 @@ function animate() {
 function updateLabel(o) {
   if (!o || !o.labelObj || !o.mesh || !o.data) return; // Guard clause
   // 根据所选字段是否至少存在来决定可见性
-  
+
   try {
     const dist = camera.position.distanceTo(o.mesh.position).toFixed(0);
     // 构建标签内容
@@ -1272,14 +1272,14 @@ function updateLabel(o) {
         lines.push(`距离: ${dist}`);
     }
     o.labelDiv.innerHTML = lines.join('<br>');
-    
+
     // 标签可见性逻辑：
     // 1. 如果处于自动显示所有标签模式，显示所有标签
     // 2. 有选中对象且不在自动显示模式时，仅显示被选中的对象标签
     // 3. 无选中时按原逻辑显示所有标签
     const hasSelection = Array.isArray(selectedObjects) && selectedObjects.length > 0;
     let shouldShowLabel = false;
-    
+
     if (showAllLabelsMode) {
       // 自动显示所有标签模式
       shouldShowLabel = true;
@@ -1290,8 +1290,35 @@ function updateLabel(o) {
       // 无选中时显示所有
       shouldShowLabel = true;
     }
-    
-    o.labelObj.visible = (lines.length > 0) && shouldShowLabel;
+
+    // 遮挡检测：检查物体是否被其他物体遮挡
+    let isOccluded = false;
+    if (shouldShowLabel && raycaster && camera) {
+      // 获取物体的世界坐标
+      const objectWorldPos = new THREE.Vector3();
+      o.mesh.getWorldPosition(objectWorldPos);
+
+      // 从相机向物体发射射线
+      const direction = objectWorldPos.clone().sub(camera.position).normalize();
+      raycaster.set(camera.position, direction);
+
+      // 计算相机到物体的距离
+      const distanceToObject = camera.position.distanceTo(objectWorldPos);
+
+      // 检测射线与所有可选择物体的相交
+      const intersects = raycaster.intersectObjects(selectableObjects);
+
+      // 如果有相交点，且最近的相交点不是当前物体，说明被遮挡
+      if (intersects.length > 0) {
+        const nearestIntersect = intersects[0];
+        // 如果最近的相交物体不是当前物体，且距离更近（有一定容差）
+        if (nearestIntersect.object !== o.mesh && nearestIntersect.distance < distanceToObject - 0.01) {
+          isOccluded = true;
+        }
+      }
+    }
+
+    o.labelObj.visible = (lines.length > 0) && shouldShowLabel && !isOccluded;
   } catch(e){
       console.warn("Error updating label for object:", o.data.name, e);
       o.labelDiv.innerHTML = `${o.data.name || 'N/A'}<br>Error updating label.`;
