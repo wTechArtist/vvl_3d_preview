@@ -1195,6 +1195,313 @@ function onMouseClick(event) {
   }
 }
 
+/******************************
+ * 删除对象功能
+ ******************************/
+
+// 从 JSON 中删除 scene_data 格式的对象
+function deleteSceneObject(mesh) {
+  if (!currentJsonData || !currentJsonData.objects) {
+    console.warn('currentJsonData.objects not found');
+    return null;
+  }
+
+  let objIndex = -1;
+  
+  // 优先使用稳定索引
+  if (typeof mesh.userData.objectIndex === 'number') {
+    objIndex = mesh.userData.objectIndex;
+  }
+  
+  // 兜底：使用名称查找
+  if (objIndex < 0 || !currentJsonData.objects[objIndex]) {
+    objIndex = currentJsonData.objects.findIndex(obj => obj && obj.name === mesh.userData.name);
+  }
+
+  if (objIndex !== -1 && currentJsonData.objects[objIndex]) {
+    // 从数组中删除
+    currentJsonData.objects.splice(objIndex, 1);
+    console.log(`Deleted scene object at index ${objIndex}: ${mesh.userData.name}`);
+    return objIndex;
+  } else {
+    console.warn('Scene object not found in JSON data');
+    return null;
+  }
+}
+
+// 从 JSON 中删除 beat
+function deleteBeat(mesh) {
+  if (!currentJsonData || !currentJsonData.beats) {
+    console.warn('currentJsonData.beats not found');
+    return null;
+  }
+
+  const beatIndex = mesh.userData.beatIndex;
+  if (beatIndex === undefined || !currentJsonData.beats[beatIndex]) {
+    console.warn('Beat not found in JSON data');
+    return null;
+  }
+
+  // 从数组中删除
+  currentJsonData.beats.splice(beatIndex, 1);
+  console.log(`Deleted beat at index ${beatIndex}`);
+  return beatIndex;
+}
+
+// 从 JSON 中删除 route key point
+function deleteRoutePoint(mesh) {
+  if (!currentJsonData || !currentJsonData.route || !currentJsonData.route.key_points) {
+    console.warn('currentJsonData.route.key_points not found');
+    return null;
+  }
+
+  const pointIndex = mesh.userData.pointIndex;
+  if (pointIndex === undefined || !currentJsonData.route.key_points[pointIndex]) {
+    console.warn('Route point not found in JSON data');
+    return null;
+  }
+
+  // 从数组中删除
+  currentJsonData.route.key_points.splice(pointIndex, 1);
+  console.log(`Deleted route key_point at index ${pointIndex}`);
+  return pointIndex;
+}
+
+// 从 JSON 中删除 spawn 或 goal
+function deleteSpawnOrGoal(mesh) {
+  if (!currentJsonData || !currentJsonData.route) {
+    console.warn('currentJsonData.route not found');
+    return false;
+  }
+
+  if (mesh.userData.type === 'spawn') {
+    currentJsonData.route.spawn = null;
+    console.log('Deleted spawn point');
+    return true;
+  } else if (mesh.userData.type === 'goal') {
+    currentJsonData.route.goal = null;
+    console.log('Deleted goal point');
+    return true;
+  }
+
+  return false;
+}
+
+// 从 JSON 中删除 guideline key point
+function deleteGuidelinePoint(mesh) {
+  const beatIndex = mesh.userData.beatIndex;
+  const pointIndex = mesh.userData.pointIndex;
+
+  if (beatIndex === undefined || pointIndex === undefined) {
+    console.warn('Beat index or point index not found');
+    return null;
+  }
+
+  if (!currentJsonData || !currentJsonData.beats || !currentJsonData.beats[beatIndex]) {
+    console.warn('Beat not found in JSON data');
+    return null;
+  }
+
+  if (!currentJsonData.beats[beatIndex].guideline_key_points) {
+    console.warn('guideline_key_points array not found');
+    return null;
+  }
+
+  // 从数组中删除
+  currentJsonData.beats[beatIndex].guideline_key_points.splice(pointIndex, 1);
+  console.log(`Deleted guideline point at beat ${beatIndex}, point ${pointIndex}`);
+  return { beatIndex, pointIndex };
+}
+
+// 更新删除后的索引
+function updateIndicesAfterDeletion(deletedType, deletedIndex, deletedBeatIndex = null) {
+  if (deletedType === 'scene_object' && deletedIndex !== null) {
+    // 更新所有 objectIndex > deletedIndex 的对象
+    selectableObjects.forEach(mesh => {
+      if (mesh.userData.objectIndex !== undefined && mesh.userData.objectIndex > deletedIndex) {
+        mesh.userData.objectIndex--;
+      }
+    });
+    objectsWithLabels.forEach(item => {
+      if (item.mesh.userData.objectIndex !== undefined && item.mesh.userData.objectIndex > deletedIndex) {
+        item.mesh.userData.objectIndex--;
+      }
+    });
+  } else if (deletedType === 'beat' && deletedIndex !== null) {
+    // 更新所有 beatIndex > deletedIndex 的对象
+    selectableObjects.forEach(mesh => {
+      if (mesh.userData.beatIndex !== undefined && mesh.userData.beatIndex > deletedIndex) {
+        mesh.userData.beatIndex--;
+      }
+    });
+    objectsWithLabels.forEach(item => {
+      if (item.mesh.userData.beatIndex !== undefined && item.mesh.userData.beatIndex > deletedIndex) {
+        item.mesh.userData.beatIndex--;
+      }
+    });
+  } else if (deletedType === 'route_point' && deletedIndex !== null) {
+    // 更新所有 pointIndex > deletedIndex 的 route_point
+    selectableObjects.forEach(mesh => {
+      if (mesh.userData.type === 'route_point' && mesh.userData.pointIndex !== undefined && mesh.userData.pointIndex > deletedIndex) {
+        mesh.userData.pointIndex--;
+      }
+    });
+    objectsWithLabels.forEach(item => {
+      if (item.mesh.userData.type === 'route_point' && item.mesh.userData.pointIndex !== undefined && item.mesh.userData.pointIndex > deletedIndex) {
+        item.mesh.userData.pointIndex--;
+      }
+    });
+  } else if (deletedType === 'guideline_point' && deletedIndex !== null && deletedBeatIndex !== null) {
+    // 更新同一 beat 内所有 pointIndex > deletedIndex 的 guideline_point
+    selectableObjects.forEach(mesh => {
+      if (mesh.userData.type === 'guideline_point' && 
+          mesh.userData.beatIndex === deletedBeatIndex &&
+          mesh.userData.pointIndex !== undefined && 
+          mesh.userData.pointIndex > deletedIndex) {
+        mesh.userData.pointIndex--;
+      }
+    });
+    objectsWithLabels.forEach(item => {
+      if (item.mesh.userData.type === 'guideline_point' && 
+          item.mesh.userData.beatIndex === deletedBeatIndex &&
+          item.mesh.userData.pointIndex !== undefined && 
+          item.mesh.userData.pointIndex > deletedIndex) {
+        item.mesh.userData.pointIndex--;
+      }
+    });
+  }
+}
+
+// 从场景中移除对象并清理资源
+function removeObjectFromScene(mesh) {
+  // 从场景树中移除
+  if (mirrorRoot && mesh.parent === mirrorRoot) {
+    mirrorRoot.remove(mesh);
+  } else if (mesh.parent) {
+    mesh.parent.remove(mesh);
+  }
+
+  // 从数组中移除
+  const selectableIndex = selectableObjects.indexOf(mesh);
+  if (selectableIndex > -1) {
+    selectableObjects.splice(selectableIndex, 1);
+  }
+
+  const labelIndex = objectsWithLabels.findIndex(item => item.mesh === mesh);
+  if (labelIndex > -1) {
+    // 移除标签
+    const labelItem = objectsWithLabels[labelIndex];
+    if (labelItem.labelObj && mesh) {
+      mesh.remove(labelItem.labelObj);
+    }
+    objectsWithLabels.splice(labelIndex, 1);
+  }
+
+  // 从原始材质映射中移除
+  originalMaterials.delete(mesh);
+
+  // 清理资源
+  if (mesh.geometry) {
+    mesh.geometry.dispose();
+  }
+  if (mesh.material) {
+    if (Array.isArray(mesh.material)) {
+      mesh.material.forEach(mat => mat.dispose());
+    } else {
+      mesh.material.dispose();
+    }
+  }
+
+  console.log(`Removed object from scene: ${mesh.userData.name || mesh.userData.type || 'Unknown'}`);
+}
+
+// 删除选中的所有对象
+function deleteSelectedObjects() {
+  if (selectedObjects.length === 0) {
+    console.log('No objects selected for deletion');
+    return;
+  }
+
+  console.log(`Deleting ${selectedObjects.length} selected object(s)`);
+
+  // 创建要删除的对象列表的副本，避免在迭代时修改数组
+  const objectsToDelete = [...selectedObjects];
+  
+  // 用于收集需要删除的关联对象
+  const associatedObjectsToDelete = [];
+
+  // 第一遍：处理 JSON 删除和收集关联对象
+  objectsToDelete.forEach(mesh => {
+    const objType = mesh.userData.type;
+    let deletedIndex = null;
+
+    if (objType === 'beat') {
+      // 删除 beat，并收集其关联的 guideline_key_points
+      deletedIndex = deleteBeat(mesh);
+      
+      if (deletedIndex !== null) {
+        // 收集所有属于该 beat 的 guideline_key_points
+        const beatIndex = mesh.userData.beatIndex;
+        selectableObjects.forEach(obj => {
+          if (obj.userData.type === 'guideline_point' && obj.userData.beatIndex === beatIndex) {
+            // 只添加不在主删除列表中的对象
+            if (!objectsToDelete.includes(obj)) {
+              associatedObjectsToDelete.push(obj);
+            }
+          }
+        });
+
+        // 更新索引
+        updateIndicesAfterDeletion('beat', deletedIndex);
+      }
+    } else if (objType === 'route_point') {
+      deletedIndex = deleteRoutePoint(mesh);
+      if (deletedIndex !== null) {
+        updateIndicesAfterDeletion('route_point', deletedIndex);
+      }
+    } else if (objType === 'spawn' || objType === 'goal') {
+      deleteSpawnOrGoal(mesh);
+    } else if (objType === 'guideline_point') {
+      const result = deleteGuidelinePoint(mesh);
+      if (result) {
+        updateIndicesAfterDeletion('guideline_point', result.pointIndex, result.beatIndex);
+      }
+    } else if (mesh.userData.originalData) {
+      // Scene data 格式的对象
+      deletedIndex = deleteSceneObject(mesh);
+      if (deletedIndex !== null) {
+        updateIndicesAfterDeletion('scene_object', deletedIndex);
+      }
+    } else {
+      console.warn('Unknown object type, skipping JSON deletion:', mesh.userData);
+    }
+  });
+
+  // 第二遍：从场景中移除所有对象（主删除对象 + 关联对象）
+  const allObjectsToRemove = [...objectsToDelete, ...associatedObjectsToDelete];
+  allObjectsToRemove.forEach(mesh => {
+    removeObjectFromScene(mesh);
+  });
+
+  // 清空选择状态
+  selectedObjects.length = 0;
+  if (transformControls) {
+    transformControls.detach();
+    transformControls.visible = false;
+  }
+
+  // 清除自动显示标签定时器
+  clearAutoShowLabelsTimer();
+
+  // 更新 JSON textarea
+  updateJsonTextarea();
+
+  // 刷新标签显示
+  objectsWithLabels.forEach(updateLabel);
+
+  console.log(`Successfully deleted ${allObjectsToRemove.length} object(s) (including ${associatedObjectsToDelete.length} associated object(s))`);
+}
+
 function onKeyDown(event) {
   if (selectedObjects.length === 0) return;
 
@@ -1213,6 +1520,10 @@ function onKeyDown(event) {
     case 'S':
       transformControls.setMode('scale');
       console.log('切换到缩放模式');
+      break;
+    case 'Delete': // Delete键删除选中对象
+    case 'Backspace': // Backspace键也可删除
+      deleteSelectedObjects();
       break;
     case 'Escape': // ESC键取消选择
       deselectAllObjects();
@@ -1928,7 +2239,7 @@ function initUI(initialData) {
   console.log("Initializing UI...");
 
   // 固定为编辑模式的提示
-  updateInfoContent('编辑模式: 点击Box选择 | Shift+点击多选 | G=移动 R=旋转 S=缩放 ESC=取消选择<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)');
+  updateInfoContent('编辑模式: 点击Box选择 | Shift+点击多选 | G=移动 R=旋转 S=缩放 | Delete=删除 ESC=取消选择<br>单位说明: 位置=cm 尺寸=米 旋转=Pitch Yaw Roll (°)');
 
   const editor = document.getElementById('jsonEditor');
   const icon = document.getElementById('expandCollapseIcon');
