@@ -61,6 +61,79 @@ function clearAutoShowLabelsTimer() {
   showAllLabelsMode = false;
 }
 
+/******************************
+ * 数据格式检测与适配
+ ******************************/
+// 检测数据格式类型
+function detectDataFormat(data) {
+  if (!data) return 'unknown';
+  
+  // 检测新格式：包含 beats 和 route
+  if (data.beats && Array.isArray(data.beats) && data.route) {
+    return 'level';
+  }
+  
+  // 检测旧格式：包含 objects 数组
+  if (data.objects && Array.isArray(data.objects)) {
+    return 'scene';
+  }
+  
+  return 'unknown';
+}
+
+// Phase 颜色映射
+const PHASE_COLORS = {
+  intro: 0x00ff00,        // 绿色
+  pressure: 0xffff00,     // 黄色
+  brief_rest: 0x00ffff,   // 青色
+  hell: 0xff0000,         // 红色
+  finale: 0xff00ff,       // 紫色
+  default: 0xcccccc       // 默认灰色
+};
+
+// 获取 phase 对应的颜色
+function getPhaseColor(phase) {
+  return PHASE_COLORS[phase] || PHASE_COLORS.default;
+}
+
+// 解析 Beat 数据，从 aabb_min/max 计算盒子参数
+function parseBeatData(beat) {
+  const aabbMin = beat.aabb_min || [0, 0, 0];
+  const aabbMax = beat.aabb_max || [0, 0, 0];
+  
+  // 计算中心位置
+  const centerX = (aabbMin[0] + aabbMax[0]) / 2;
+  const centerY = (aabbMin[1] + aabbMax[1]) / 2;
+  const centerZ = (aabbMin[2] + aabbMax[2]) / 2;
+  
+  // 计算尺寸
+  const sizeX = Math.abs(aabbMax[0] - aabbMin[0]);
+  const sizeY = Math.abs(aabbMax[1] - aabbMin[1]);
+  const sizeZ = Math.abs(aabbMax[2] - aabbMin[2]);
+  
+  return {
+    position: [centerX, centerY, centerZ],
+    size: [sizeX, sizeY, sizeZ],
+    beat_index: beat.beat_index,
+    difficulty: beat.difficulty,
+    phase: beat.phase,
+    intensity: beat.intensity,
+    guideline_key_points: beat.guideline_key_points || [],
+    overlap_regions: beat.overlap_regions || []
+  };
+}
+
+// 解析 Route 数据
+function parseRouteData(route) {
+  if (!route) return null;
+  
+  return {
+    key_points: route.key_points || [],
+    spawn: route.spawn || null,
+    goal: route.goal || null
+  };
+}
+
 // --- 颜色解析与确定性颜色 ---
 function parseColorToNumber(input) {
   if (typeof input === 'number') {
@@ -539,6 +612,52 @@ function updateInfoContent(message) {
 }
 
 /******************************
+ * 自动相机定位
+ ******************************/
+function calculateSceneBounds() {
+  const box = new THREE.Box3();
+  
+  selectableObjects.forEach(obj => {
+    const objBox = new THREE.Box3().setFromObject(obj);
+    box.union(objBox);
+  });
+  
+  return box;
+}
+
+function setupCameraForScene(sceneBox) {
+  if (sceneBox.isEmpty()) {
+    console.warn("Scene box is empty, using default camera position");
+    camera.position.set(100 * posUnitFactor, 100 * posUnitFactor, 100 * posUnitFactor);
+    controls.target.set(0, 0, 0);
+    return;
+  }
+  
+  const center = new THREE.Vector3();
+  sceneBox.getCenter(center);
+  
+  const size = new THREE.Vector3();
+  sceneBox.getSize(size);
+  const maxDim = Math.max(size.x, size.y, size.z);
+  
+  const fov = camera.fov * (Math.PI / 180);
+  const cameraDistance = maxDim / (2 * Math.tan(fov / 2)) * 1.5;
+  
+  const angle = Math.PI / 4;
+  camera.position.set(
+    center.x + cameraDistance * Math.cos(angle),
+    center.y - cameraDistance * Math.sin(angle),
+    center.z + cameraDistance * 0.7
+  );
+  
+  controls.target.copy(center);
+  camera.lookAt(center);
+  controls.update();
+  
+  console.log(`Auto camera setup: center=${center.toArray()}, distance=${cameraDistance.toFixed(2)}`);
+}
+
+/******************************
  * 场景初始化
  ******************************/
 function initScene(data) {
@@ -552,12 +671,14 @@ function initScene(data) {
     mirrorRoot.scale.y = -1;
     scene.add(mirrorRoot);
 
+    // 检测数据格式
+    const dataFormat = detectDataFormat(data);
+    console.log(`Detected data format: ${dataFormat}`);
+
+    // 初始化相机
     const camData = data.camera || defaultData.camera;
-    camera = new THREE.PerspectiveCamera(camData.fov || 75, window.innerWidth / window.innerHeight, 0.1, 1e6);
+    camera = new THREE.PerspectiveCamera(camData.fov || 65, window.innerWidth / window.innerHeight, 0.1, 1e6);
     camera.up.set(0, 0, 1);
-    camera.position.set(...camData.position.map(p=> p * posUnitFactor));
-    const camRotVec = rotationUnit === 'deg' ? camData.rotation.map(r=>THREE.MathUtils.degToRad(r)) : camData.rotation;
-    camera.rotation.set(...camRotVec);
 
     renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -574,23 +695,14 @@ function initScene(data) {
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.screenSpacePanning = true;
-    if(data.objects && data.objects.length > 0){
-        const firstObjPos = data.objects[0].position;
-        controls.target.set(firstObjPos[0] * posUnitFactor, firstObjPos[1] * posUnitFactor, firstObjPos[2] * posUnitFactor);
-    } else {
-        controls.target.set(0,0,0); // Default target if no objects
-    }
-    camera.lookAt(controls.target);
-    controls.update();
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.7));
     const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(1000, 1000, 1000); // Move light further away for large scenes
+    dirLight.position.set(1000, 1000, 1000);
     scene.add(dirLight);
 
     const axesHelper = new THREE.AxesHelper(5000);
     mirrorRoot.add(axesHelper);
-    // Add axis labels for AxesHelper (ensure CSS is present in HTML for .label)
     const axesLabels = ['X', 'Y', 'Z'];
     const axesColors = [0xff0000, 0x00ff00, 0x0000ff];
     axesLabels.forEach((axis, index) => {
@@ -602,18 +714,56 @@ function initScene(data) {
         labelDiv.style.fontWeight = 'bold';
         const label = new CSS2DObject(labelDiv);
         const pos = [0,0,0];
-        pos[index] = 5500; // Position beyond axes lines
+        pos[index] = 5500;
         label.position.set(...pos);
         axesHelper.add(label);
     });
 
-    if (data.objects && Array.isArray(data.objects)) {
+    // 根据数据格式创建场景对象
+    if (dataFormat === 'level') {
+      // 新格式：创建 beats 和 route
+      console.log('Loading level data format');
+      updateInfoContent('加载关卡数据格式 (Beats + Route)');
+      
+      if (data.beats && Array.isArray(data.beats)) {
+        data.beats.forEach((beat, index) => createBeat(beat, index));
+      }
+      if (data.route) {
+        createRoute(data.route);
+      }
+    } else if (dataFormat === 'scene') {
+      // 旧格式：创建 objects
+      console.log('Loading scene data format');
+      updateInfoContent('加载场景数据格式 (Objects)');
+      
+      if (data.objects && Array.isArray(data.objects)) {
         data.objects.forEach((objData, index) => createObject(objData, index));
+      }
     }
 
     // 初始化变换控制器和点击检测
     initTransformControls();
     initMouseInteraction();
+
+    // 自动设置相机位置
+    if (dataFormat === 'level' || (dataFormat === 'scene' && selectableObjects.length > 0)) {
+      const sceneBox = calculateSceneBounds();
+      setupCameraForScene(sceneBox);
+    } else if (data.camera) {
+      // 使用数据中提供的相机设置
+      camera.position.set(...camData.position.map(p => p * posUnitFactor));
+      const camRotVec = rotationUnit === 'deg' ? camData.rotation.map(r => THREE.MathUtils.degToRad(r)) : camData.rotation;
+      camera.rotation.set(...camRotVec);
+      
+      if (data.objects && data.objects.length > 0) {
+        const firstObjPos = data.objects[0].position;
+        controls.target.set(firstObjPos[0] * posUnitFactor, firstObjPos[1] * posUnitFactor, firstObjPos[2] * posUnitFactor);
+      } else {
+        controls.target.set(0, 0, 0);
+      }
+      camera.lookAt(controls.target);
+      controls.update();
+    }
 
     window.addEventListener('resize', onResize, false);
     console.log("Scene initialized successfully.");
@@ -668,6 +818,224 @@ function createObject(objData, objectIndex) {
     objectsWithLabels.push({ mesh, labelObj, labelDiv, data: objData });
   } catch(e){
       console.error("Error creating object:", objData, e);
+  }
+}
+
+// 创建 Beat 可视化（半透明盒子）
+function createBeat(beatData, beatIndex) {
+  try {
+    const parsed = parseBeatData(beatData);
+    
+    const geo = new THREE.BoxGeometry(
+      parsed.size[0] * posUnitFactor,
+      parsed.size[1] * posUnitFactor,
+      parsed.size[2] * posUnitFactor
+    );
+    
+    const color = getPhaseColor(parsed.phase);
+    
+    const mat = new THREE.MeshStandardMaterial({
+      color: color,
+      transparent: true,
+      opacity: 0.3,
+      roughness: 0.7,
+      side: THREE.DoubleSide
+    });
+    
+    const mesh = new THREE.Mesh(geo, mat);
+    
+    const posVec = parsed.position.map(p => p * posUnitFactor);
+    mesh.position.set(...posVec);
+    
+    const edges = new THREE.EdgesGeometry(geo);
+    const lineMat = new THREE.LineBasicMaterial({ color: color, linewidth: 2 });
+    const wireframe = new THREE.LineSegments(edges, lineMat);
+    mesh.add(wireframe);
+    
+    mesh.userData = {
+      type: 'beat',
+      beatData: parsed,
+      beatIndex: beatIndex,
+      name: `Beat #${parsed.beat_index}`
+    };
+    
+    originalMaterials.set(mesh, mat);
+    
+    mirrorRoot.add(mesh);
+    selectableObjects.push(mesh);
+    
+    const labelDiv = document.createElement('div');
+    labelDiv.className = 'label';
+    const labelObj = new CSS2DObject(labelDiv);
+    labelObj.position.set(0, 0, 0);
+    mesh.add(labelObj);
+    
+    const labelData = {
+      name: `Beat #${parsed.beat_index}`,
+      beat_index: parsed.beat_index,
+      phase: parsed.phase,
+      difficulty: parsed.difficulty,
+      intensity: parsed.intensity
+    };
+    
+    objectsWithLabels.push({ mesh, labelObj, labelDiv, data: labelData, type: 'beat' });
+    
+    console.log(`Created beat #${parsed.beat_index}`);
+  } catch(e) {
+    console.error("Error creating beat:", beatData, e);
+  }
+}
+
+// 创建 Route 可视化（球体和连线）
+function createRoute(routeData) {
+  try {
+    const parsed = parseRouteData(routeData);
+    if (!parsed) return;
+    
+    const keyPoints = parsed.key_points;
+    const spawn = parsed.spawn;
+    const goal = parsed.goal;
+    
+    // 创建连线
+    if (keyPoints.length > 1) {
+      const points = keyPoints.map(pt => 
+        new THREE.Vector3(
+          pt.x * posUnitFactor,
+          pt.y * posUnitFactor,
+          pt.z * posUnitFactor
+        )
+      );
+      
+      const lineGeometry = new THREE.BufferGeometry().setFromPoints(points);
+      const lineMaterial = new THREE.LineBasicMaterial({
+        color: 0xffffff,
+        linewidth: 3
+      });
+      const line = new THREE.Line(lineGeometry, lineMaterial);
+      line.userData = { type: 'route_line', name: 'Route Path' };
+      mirrorRoot.add(line);
+    }
+    
+    // 创建关键点球体
+    keyPoints.forEach((pt, index) => {
+      const sphereGeo = new THREE.SphereGeometry(0.5 * posUnitFactor, 16, 16);
+      const sphereMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: 0.5
+      });
+      const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+      sphere.position.set(
+        pt.x * posUnitFactor,
+        pt.y * posUnitFactor,
+        pt.z * posUnitFactor
+      );
+      
+      sphere.userData = {
+        type: 'route_point',
+        pointIndex: index,
+        name: `Point #${index + 1}`,
+        position: [pt.x, pt.y, pt.z]
+      };
+      
+      originalMaterials.set(sphere, sphereMat);
+      mirrorRoot.add(sphere);
+      selectableObjects.push(sphere);
+      
+      const labelDiv = document.createElement('div');
+      labelDiv.className = 'label';
+      const labelObj = new CSS2DObject(labelDiv);
+      labelObj.position.set(0, 0, 0);
+      sphere.add(labelObj);
+      
+      const labelData = {
+        name: `Point #${index + 1}`,
+        position: [pt.x, pt.y, pt.z]
+      };
+      
+      objectsWithLabels.push({ mesh: sphere, labelObj, labelDiv, data: labelData, type: 'route_point' });
+    });
+    
+    // Spawn 点
+    if (spawn) {
+      const spawnGeo = new THREE.SphereGeometry(0.8 * posUnitFactor, 16, 16);
+      const spawnMat = new THREE.MeshStandardMaterial({
+        color: 0x00ff00,
+        emissive: 0x003300,
+        roughness: 0.3
+      });
+      const spawnSphere = new THREE.Mesh(spawnGeo, spawnMat);
+      spawnSphere.position.set(
+        spawn.x * posUnitFactor,
+        spawn.y * posUnitFactor,
+        spawn.z * posUnitFactor
+      );
+      
+      spawnSphere.userData = {
+        type: 'spawn',
+        name: 'Spawn',
+        position: [spawn.x, spawn.y, spawn.z]
+      };
+      
+      originalMaterials.set(spawnSphere, spawnMat);
+      mirrorRoot.add(spawnSphere);
+      selectableObjects.push(spawnSphere);
+      
+      const labelDiv = document.createElement('div');
+      labelDiv.className = 'label';
+      const labelObj = new CSS2DObject(labelDiv);
+      labelObj.position.set(0, 0, 0);
+      spawnSphere.add(labelObj);
+      
+      const labelData = {
+        name: 'Spawn',
+        position: [spawn.x, spawn.y, spawn.z]
+      };
+      
+      objectsWithLabels.push({ mesh: spawnSphere, labelObj, labelDiv, data: labelData, type: 'spawn' });
+    }
+    
+    // Goal 点
+    if (goal) {
+      const goalGeo = new THREE.SphereGeometry(0.8 * posUnitFactor, 16, 16);
+      const goalMat = new THREE.MeshStandardMaterial({
+        color: 0x0000ff,
+        emissive: 0x000033,
+        roughness: 0.3
+      });
+      const goalSphere = new THREE.Mesh(goalGeo, goalMat);
+      goalSphere.position.set(
+        goal.x * posUnitFactor,
+        goal.y * posUnitFactor,
+        goal.z * posUnitFactor
+      );
+      
+      goalSphere.userData = {
+        type: 'goal',
+        name: 'Goal',
+        position: [goal.x, goal.y, goal.z]
+      };
+      
+      originalMaterials.set(goalSphere, goalMat);
+      mirrorRoot.add(goalSphere);
+      selectableObjects.push(goalSphere);
+      
+      const labelDiv = document.createElement('div');
+      labelDiv.className = 'label';
+      const labelObj = new CSS2DObject(labelDiv);
+      labelObj.position.set(0, 0, 0);
+      goalSphere.add(labelObj);
+      
+      const labelData = {
+        name: 'Goal',
+        position: [goal.x, goal.y, goal.z]
+      };
+      
+      objectsWithLabels.push({ mesh: goalSphere, labelObj, labelDiv, data: labelData, type: 'goal' });
+    }
+    
+    console.log(`Created route with ${keyPoints.length} key points`);
+  } catch(e) {
+    console.error("Error creating route:", routeData, e);
   }
 }
 
@@ -989,22 +1357,116 @@ function updateMultipleObjectsTransform() {
   console.log(`多选物体变换更新: 模式=${mode}, 对象数量=${selectedObjects.length}`);
 }
 
-function updateObjectTransform(mesh) {
-  console.log('updateObjectTransform called for:', mesh.userData?.originalData?.name || 'Unknown');
+/******************************
+ * Level Data 格式对象更新函数
+ ******************************/
+// 更新 beat 对象（level_data 格式）
+function updateBeatTransform(mesh, mode) {
+  const beatIndex = mesh.userData.beatIndex;
+  if (beatIndex === undefined || !currentJsonData.beats || !currentJsonData.beats[beatIndex]) {
+    console.warn('Beat index not found or beats array missing');
+    return;
+  }
   
-  if (!mesh.userData || !mesh.userData.originalData) {
-    console.warn('Mesh missing userData or originalData');
+  const worldPosition = new THREE.Vector3();
+  mesh.getWorldPosition(worldPosition);
+  
+  // 转换坐标（考虑 Y 轴翻转）
+  const centerX = worldPosition.x / posUnitFactor;
+  const centerY = -worldPosition.y / posUnitFactor;  // Y轴翻转
+  const centerZ = worldPosition.z / posUnitFactor;
+  
+  // 计算尺寸（考虑 scale）
+  const geometry = mesh.geometry;
+  const sizeX = (geometry.parameters.width / posUnitFactor) * mesh.scale.x;
+  const sizeY = (geometry.parameters.height / posUnitFactor) * mesh.scale.y;
+  const sizeZ = (geometry.parameters.depth / posUnitFactor) * mesh.scale.z;
+  
+  // 更新所有字段
+  currentJsonData.beats[beatIndex].position = {
+    x: roundTo(centerX, 2),
+    y: roundTo(centerY, 2),
+    z: roundTo(centerZ, 2)
+  };
+  
+  currentJsonData.beats[beatIndex].size = {
+    width: roundTo(sizeX, 2),
+    height: roundTo(sizeY, 2),
+    depth: roundTo(sizeZ, 2)
+  };
+  
+  currentJsonData.beats[beatIndex].aabb_min = [
+    roundTo(centerX - sizeX / 2, 2),
+    roundTo(centerY - sizeY / 2, 2),
+    roundTo(centerZ - sizeZ / 2, 2)
+  ];
+  
+  currentJsonData.beats[beatIndex].aabb_max = [
+    roundTo(centerX + sizeX / 2, 2),
+    roundTo(centerY + sizeY / 2, 2),
+    roundTo(centerZ + sizeZ / 2, 2)
+  ];
+  
+  console.log(`Updated beat #${beatIndex}: pos={x:${centerX.toFixed(2)}, y:${centerY.toFixed(2)}, z:${centerZ.toFixed(2)}}`);
+}
+
+// 更新 spawn/goal 点（level_data 格式）
+function updateRoutePointTransform(mesh) {
+  if (!currentJsonData.route) {
+    console.warn('Route data not found');
+    return;
+  }
+  
+  const worldPosition = new THREE.Vector3();
+  mesh.getWorldPosition(worldPosition);
+  
+  const newPos = {
+    x: roundTo(worldPosition.x / posUnitFactor, 2),
+    y: roundTo(-worldPosition.y / posUnitFactor, 2),  // Y轴翻转
+    z: roundTo(worldPosition.z / posUnitFactor, 2)
+  };
+  
+  if (mesh.userData.type === 'spawn') {
+    currentJsonData.route.spawn = newPos;
+    console.log(`Updated spawn: ${JSON.stringify(newPos)}`);
+  } else if (mesh.userData.type === 'goal') {
+    currentJsonData.route.goal = newPos;
+    console.log(`Updated goal: ${JSON.stringify(newPos)}`);
+  }
+}
+
+// 更新 route key_points（level_data 格式）
+function updateRouteKeyPointTransform(mesh) {
+  const pointIndex = mesh.userData.pointIndex;
+  if (pointIndex === undefined || !currentJsonData.route || !currentJsonData.route.key_points) {
+    console.warn('Point index not found or key_points array missing');
+    return;
+  }
+  
+  const worldPosition = new THREE.Vector3();
+  mesh.getWorldPosition(worldPosition);
+  
+  currentJsonData.route.key_points[pointIndex] = {
+    x: roundTo(worldPosition.x / posUnitFactor, 2),
+    y: roundTo(-worldPosition.y / posUnitFactor, 2),  // Y轴翻转
+    z: roundTo(worldPosition.z / posUnitFactor, 2)
+  };
+  
+  console.log(`Updated route key_point #${pointIndex}`);
+}
+
+/******************************
+ * Scene Data 格式对象更新函数
+ ******************************/
+// 更新 scene 对象（scene_data 格式）
+function updateSceneObjectTransform(mesh, mode) {
+  if (!mesh.userData.originalData) {
+    console.warn('Mesh missing originalData');
     return;
   }
 
-  console.log('Current mesh position:', mesh.position.x, mesh.position.y, mesh.position.z);
-
-  const mode = transformControls ? transformControls.getMode() : 'translate';
-
-  // 获取在世界坐标系中的位置（考虑mirrorRoot的变换）
   const worldPosition = new THREE.Vector3();
   mesh.getWorldPosition(worldPosition);
-  console.log('World position:', worldPosition.x, worldPosition.y, worldPosition.z);
 
   // 仅按当前模式生成对应的新值
   const newPosition = (mode === 'translate') ? [
@@ -1036,7 +1498,6 @@ function updateObjectTransform(mesh) {
   if (newScale) mesh.userData.originalData.scale = newScale;
 
   // 更新当前JSON数据（优先按稳定索引，其次名称兜底）
-  console.log('Updating JSON data. currentJsonData exists:', !!currentJsonData);
   if (currentJsonData && Array.isArray(currentJsonData.objects)) {
     let objIndex = -1;
     if (typeof mesh.userData.objectIndex === 'number') {
@@ -1045,7 +1506,6 @@ function updateObjectTransform(mesh) {
     if (objIndex < 0 || !currentJsonData.objects[objIndex]) {
       objIndex = currentJsonData.objects.findIndex(obj => obj && obj.name === mesh.userData.name);
     }
-    console.log('Resolved object index:', objIndex);
     if (objIndex !== -1) {
       const target = currentJsonData.objects[objIndex];
       if (newPosition) target.position = newPosition;
@@ -1058,16 +1518,41 @@ function updateObjectTransform(mesh) {
     } else {
       console.warn('Object not found in currentJsonData.objects');
     }
-  } else {
-    console.warn('currentJsonData or currentJsonData.objects is null/undefined');
+  }
+  
+  console.log(`Scene object updated: mode=${mode}`);
+}
+
+function updateObjectTransform(mesh) {
+  if (!mesh.userData) {
+    console.warn('Mesh missing userData');
+    return;
   }
 
-  // 在多选更新完成后统一更新JSON编辑器
+  const mode = transformControls ? transformControls.getMode() : 'translate';
+
+  // 根据对象类型分发到相应的更新函数
+  if (mesh.userData.type === 'beat') {
+    // Level Data: Beat 对象
+    updateBeatTransform(mesh, mode);
+  } else if (mesh.userData.type === 'spawn' || mesh.userData.type === 'goal') {
+    // Level Data: Spawn/Goal 点
+    updateRoutePointTransform(mesh);
+  } else if (mesh.userData.type === 'route_point') {
+    // Level Data: Route key_points
+    updateRouteKeyPointTransform(mesh);
+  } else if (mesh.userData.originalData) {
+    // Scene Data: 普通场景对象
+    updateSceneObjectTransform(mesh, mode);
+  } else {
+    console.warn('Unknown object type, skipping update');
+    return;
+  }
+
+  // 更新 JSON textarea
   if (selectedObjects.length <= 1) {
     updateJsonTextarea();
   }
-
-  console.log(`物体变换更新: 模式=${mode}`);
 }
 
 // 统一更新JSON编辑器内容
@@ -1247,71 +1732,85 @@ function animate() {
 
 function updateLabel(o) {
   if (!o || !o.labelObj || !o.mesh || !o.data) return; // Guard clause
-  // 根据所选字段是否至少存在来决定可见性
 
   try {
     const dist = camera.position.distanceTo(o.mesh.position).toFixed(0);
-    // 构建标签内容
     const lines = [];
-    if(showName){
-        // 只显示name的最后一个单词(下划线连接的部分视为一个单词)
+    
+    // 根据对象类型构建不同的标签内容
+    const objType = o.type || (o.mesh.userData ? o.mesh.userData.type : 'object');
+    
+    if (objType === 'beat') {
+      // Beat 对象标签
+      if (showName) {
+        lines.push(o.data.name || `Beat #${o.data.beat_index}`);
+      }
+      if (showPosition) {
+        lines.push(`Phase: ${o.data.phase || 'N/A'}`);
+        lines.push(`Difficulty: ${o.data.difficulty || 'N/A'}`);
+        lines.push(`Intensity: ${o.data.intensity !== undefined ? o.data.intensity.toFixed(1) : 'N/A'}`);
+      }
+      if (showDistance) {
+        lines.push(`距离: ${dist}`);
+      }
+    } else if (objType === 'route_point' || objType === 'spawn' || objType === 'goal') {
+      // Route 点标签
+      if (showName) {
+        lines.push(o.data.name || 'Point');
+      }
+      if (showPosition && o.data.position) {
+        lines.push(`Pos: [${o.data.position.map(v => v.toFixed(1)).join(', ')}]`);
+      }
+      if (showDistance) {
+        lines.push(`距离: ${dist}`);
+      }
+    } else {
+      // 原有的 object 标签
+      if (showName) {
         const fullName = o.data.name || 'N/A';
         const lastName = fullName.split(/[\s-]+/).filter(s => s.length > 0).pop() || fullName;
         lines.push(lastName);
-    }
-    if(showPosition){
+      }
+      if (showPosition) {
         lines.push(`position(cm): [${(o.data.position || [0,0,0]).join(', ')}]`);
-    }
-    if(showRotation){
+      }
+      if (showRotation) {
         lines.push(`rotation(P,Y,R): [${(o.data.rotation || [0,0,0]).join(', ')}] ${rotationUnit === 'deg' ? '°' : 'rad'}`);
-    }
-    if(showScale){
+      }
+      if (showScale) {
         lines.push(`scale(m): [${(o.data.scale || [0,0,0]).join(', ')}]`);
-    }
-    if(showDistance){
+      }
+      if (showDistance) {
         lines.push(`距离: ${dist}`);
+      }
     }
+    
     o.labelDiv.innerHTML = lines.join('<br>');
 
-    // 标签可见性逻辑：
-    // 1. 如果处于自动显示所有标签模式，显示所有标签
-    // 2. 有选中对象且不在自动显示模式时，仅显示被选中的对象标签
-    // 3. 无选中时按原逻辑显示所有标签
+    // 标签可见性逻辑
     const hasSelection = Array.isArray(selectedObjects) && selectedObjects.length > 0;
     let shouldShowLabel = false;
 
     if (showAllLabelsMode) {
-      // 自动显示所有标签模式
       shouldShowLabel = true;
     } else if (hasSelection) {
-      // 有选中对象时，仅显示选中的
       shouldShowLabel = selectedObjects.includes(o.mesh);
     } else {
-      // 无选中时显示所有
       shouldShowLabel = true;
     }
 
-    // 遮挡检测：检查物体是否被其他物体遮挡
+    // 遮挡检测
     let isOccluded = false;
     if (shouldShowLabel && raycaster && camera) {
-      // 获取物体的世界坐标
       const objectWorldPos = new THREE.Vector3();
       o.mesh.getWorldPosition(objectWorldPos);
-
-      // 从相机向物体发射射线
       const direction = objectWorldPos.clone().sub(camera.position).normalize();
       raycaster.set(camera.position, direction);
-
-      // 计算相机到物体的距离
       const distanceToObject = camera.position.distanceTo(objectWorldPos);
-
-      // 检测射线与所有可选择物体的相交
       const intersects = raycaster.intersectObjects(selectableObjects);
 
-      // 如果有相交点，且最近的相交点不是当前物体，说明被遮挡
       if (intersects.length > 0) {
         const nearestIntersect = intersects[0];
-        // 如果最近的相交物体不是当前物体，且距离更近（有一定容差）
         if (nearestIntersect.object !== o.mesh && nearestIntersect.distance < distanceToObject - 0.01) {
           isOccluded = true;
         }
@@ -1319,9 +1818,9 @@ function updateLabel(o) {
     }
 
     o.labelObj.visible = (lines.length > 0) && shouldShowLabel && !isOccluded;
-  } catch(e){
-      console.warn("Error updating label for object:", o.data.name, e);
-      o.labelDiv.innerHTML = `${o.data.name || 'N/A'}<br>Error updating label.`;
+  } catch(e) {
+    console.warn("Error updating label for object:", o.data.name, e);
+    o.labelDiv.innerHTML = `${o.data.name || 'N/A'}<br>Error updating label.`;
   }
 }
 
