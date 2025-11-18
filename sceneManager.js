@@ -880,6 +880,58 @@ function createBeat(beatData, beatIndex) {
     
     objectsWithLabels.push({ mesh, labelObj, labelDiv, data: labelData, type: 'beat' });
     
+    // 渲染 guideline_key_points
+    if (parsed.guideline_key_points && parsed.guideline_key_points.length > 0) {
+      parsed.guideline_key_points.forEach((pt, pointIndex) => {
+        const guideGeo = new THREE.SphereGeometry(0.3 * posUnitFactor, 12, 12);
+        const guideMat = new THREE.MeshStandardMaterial({
+          color: 0xffaa00,  // 橙色
+          emissive: 0x442200,
+          roughness: 0.4
+        });
+        const guideSphere = new THREE.Mesh(guideGeo, guideMat);
+        
+        // 设置位置
+        guideSphere.position.set(
+          pt.x * posUnitFactor,
+          pt.y * posUnitFactor,
+          pt.z * posUnitFactor
+        );
+        
+        // 设置 userData
+        guideSphere.userData = {
+          type: 'guideline_point',
+          beatIndex: beatIndex,
+          pointIndex: pointIndex,
+          name: `Beat#${parsed.beat_index} Guide#${pointIndex}`
+        };
+        
+        originalMaterials.set(guideSphere, guideMat);
+        mirrorRoot.add(guideSphere);
+        selectableObjects.push(guideSphere);
+        
+        // 添加标签
+        const guideLabelDiv = document.createElement('div');
+        guideLabelDiv.className = 'label';
+        const guideLabelObj = new CSS2DObject(guideLabelDiv);
+        guideLabelObj.position.set(0, 0, 0);
+        guideSphere.add(guideLabelObj);
+        
+        const guideLabelData = {
+          name: `Guide#${pointIndex}`,
+          position: [pt.x, pt.y, pt.z]
+        };
+        
+        objectsWithLabels.push({ 
+          mesh: guideSphere, 
+          labelObj: guideLabelObj, 
+          labelDiv: guideLabelDiv, 
+          data: guideLabelData, 
+          type: 'guideline_point' 
+        });
+      });
+    }
+    
     console.log(`Created beat #${parsed.beat_index}`);
   } catch(e) {
     console.error("Error creating beat:", beatData, e);
@@ -1455,6 +1507,36 @@ function updateRouteKeyPointTransform(mesh) {
   console.log(`Updated route key_point #${pointIndex}`);
 }
 
+// 更新 guideline_key_points（level_data 格式）
+function updateGuidelinePointTransform(mesh) {
+  const beatIndex = mesh.userData.beatIndex;
+  const pointIndex = mesh.userData.pointIndex;
+  
+  if (beatIndex === undefined || pointIndex === undefined) {
+    console.warn('Beat index or point index not found');
+    return;
+  }
+  if (!currentJsonData.beats || !currentJsonData.beats[beatIndex]) {
+    console.warn('Beat not found in currentJsonData');
+    return;
+  }
+  if (!currentJsonData.beats[beatIndex].guideline_key_points) {
+    console.warn('guideline_key_points array missing');
+    return;
+  }
+  
+  const worldPosition = new THREE.Vector3();
+  mesh.getWorldPosition(worldPosition);
+  
+  currentJsonData.beats[beatIndex].guideline_key_points[pointIndex] = {
+    x: roundTo(worldPosition.x / posUnitFactor, 2),
+    y: roundTo(-worldPosition.y / posUnitFactor, 2),  // Y轴翻转
+    z: roundTo(worldPosition.z / posUnitFactor, 2)
+  };
+  
+  console.log(`Updated beat #${beatIndex} guideline point #${pointIndex}`);
+}
+
 /******************************
  * Scene Data 格式对象更新函数
  ******************************/
@@ -1541,6 +1623,9 @@ function updateObjectTransform(mesh) {
   } else if (mesh.userData.type === 'route_point') {
     // Level Data: Route key_points
     updateRouteKeyPointTransform(mesh);
+  } else if (mesh.userData.type === 'guideline_point') {
+    // Level Data: Beat guideline_key_points
+    updateGuidelinePointTransform(mesh);
   } else if (mesh.userData.originalData) {
     // Scene Data: 普通场景对象
     updateSceneObjectTransform(mesh, mode);
