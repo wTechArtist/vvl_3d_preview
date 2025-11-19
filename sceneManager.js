@@ -22,6 +22,8 @@ let isProgrammaticJsonUpdate = false; // 程序化更新textarea时抑制oninput
 let autoShowLabelsTimer = null; // 自动显示所有标签的定时器
 let showAllLabelsMode = false; // 是否显示所有标签模式（选中3秒后自动触发）
 let autoShowLabelsDelay = 1000; // 自动显示所有标签的延迟时间（毫秒），默认3秒
+let lastCameraUpdateTime = 0; // 上次更新相机到JSON的时间戳
+const cameraUpdateInterval = 500; // 相机更新到JSON的节流间隔（毫秒）
 
 function setTransformSnapFromUnits() {
   if (transformControls) {
@@ -766,6 +768,34 @@ function initScene(data) {
     }
 
     window.addEventListener('resize', onResize, false);
+    
+    // 初始化 currentJsonData.camera 以确保包含完整的相机信息
+    if (currentJsonData && camera) {
+      if (!currentJsonData.camera) {
+        currentJsonData.camera = {};
+      }
+      // 初始化 camera.fov
+      if (!currentJsonData.camera.fov) {
+        currentJsonData.camera.fov = camera.fov;
+      }
+      // 初始化 camera.position（如果不存在）
+      if (!currentJsonData.camera.position) {
+        currentJsonData.camera.position = [
+          camera.position.x / posUnitFactor,
+          camera.position.y / posUnitFactor,
+          camera.position.z / posUnitFactor
+        ];
+      }
+      // 初始化 camera.rotation（如果不存在）
+      if (!currentJsonData.camera.rotation) {
+        const rotX = rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(camera.rotation.x) : camera.rotation.x;
+        const rotY = rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(camera.rotation.y) : camera.rotation.y;
+        const rotZ = rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(camera.rotation.z) : camera.rotation.z;
+        currentJsonData.camera.rotation = [rotX, rotY, rotZ];
+      }
+      console.log("currentJsonData.camera initialized:", currentJsonData.camera);
+    }
+    
     console.log("Scene initialized successfully.");
   } catch (error) {
     console.error("Error during scene initialization:", error);
@@ -826,10 +856,11 @@ function createBeat(beatData, beatIndex) {
   try {
     const parsed = parseBeatData(beatData);
     
+    // Beat的尺寸应该使用scaleUnitFactor，而不是posUnitFactor
     const geo = new THREE.BoxGeometry(
-      parsed.size[0] * posUnitFactor,
-      parsed.size[1] * posUnitFactor,
-      parsed.size[2] * posUnitFactor
+      parsed.size[0] * scaleUnitFactor,
+      parsed.size[1] * scaleUnitFactor,
+      parsed.size[2] * scaleUnitFactor
     );
     
     const color = getPhaseColor(parsed.phase);
@@ -844,6 +875,7 @@ function createBeat(beatData, beatIndex) {
     
     const mesh = new THREE.Mesh(geo, mat);
     
+    // 位置使用posUnitFactor
     const posVec = parsed.position.map(p => p * posUnitFactor);
     mesh.position.set(...posVec);
     
@@ -1739,11 +1771,11 @@ function updateBeatTransform(mesh, mode) {
   const centerY = -worldPosition.y / posUnitFactor;  // Y轴翻转
   const centerZ = worldPosition.z / posUnitFactor;
   
-  // 计算尺寸（考虑 scale）
+  // 计算尺寸（考虑 scale）- 注意：尺寸使用scaleUnitFactor
   const geometry = mesh.geometry;
-  const sizeX = (geometry.parameters.width / posUnitFactor) * mesh.scale.x;
-  const sizeY = (geometry.parameters.height / posUnitFactor) * mesh.scale.y;
-  const sizeZ = (geometry.parameters.depth / posUnitFactor) * mesh.scale.z;
+  const sizeX = (geometry.parameters.width / scaleUnitFactor) * mesh.scale.x;
+  const sizeY = (geometry.parameters.height / scaleUnitFactor) * mesh.scale.y;
+  const sizeZ = (geometry.parameters.depth / scaleUnitFactor) * mesh.scale.z;
   
   // 更新所有字段
   currentJsonData.beats[beatIndex].position = {
@@ -1770,7 +1802,7 @@ function updateBeatTransform(mesh, mode) {
     roundTo(centerZ + sizeZ / 2, 2)
   ];
   
-  console.log(`Updated beat #${beatIndex}: pos={x:${centerX.toFixed(2)}, y:${centerY.toFixed(2)}, z:${centerZ.toFixed(2)}}`);
+  console.log(`Updated beat #${beatIndex}: pos={x:${centerX.toFixed(2)}, y:${centerY.toFixed(2)}, z:${centerZ.toFixed(2)}}, size={w:${sizeX.toFixed(2)}, h:${sizeY.toFixed(2)}, d:${sizeZ.toFixed(2)}}`);
 }
 
 // 更新 spawn/goal 点（level_data 格式）
@@ -1965,6 +1997,229 @@ function updateJsonTextarea() {
   }
 }
 
+/******************************
+ * 倍率变化时更新JSON的辅助函数
+ ******************************/
+
+// 更新位置相关字段
+function updateJsonForPositionFactorChange(oldFactor, newFactor) {
+  if (!currentJsonData) return;
+  const ratio = newFactor / oldFactor;
+  const dataFormat = detectDataFormat(currentJsonData);
+  
+  console.log(`%c=== 更新位置倍率 ===`, 'color: blue; font-weight: bold');
+  console.log(`旧倍率: ${oldFactor} → 新倍率: ${newFactor}, 比例: ${ratio}`);
+  console.log(`数据格式: ${dataFormat}`);
+  
+  // 更新camera.position
+  if (currentJsonData.camera && currentJsonData.camera.position) {
+    const oldPos = [...currentJsonData.camera.position];
+    currentJsonData.camera.position = currentJsonData.camera.position.map(v => roundTo(v * ratio, 2));
+    console.log(`Camera position: [${oldPos}] → [${currentJsonData.camera.position}]`);
+  }
+  
+  if (dataFormat === 'scene') {
+    // Scene格式：更新objects[].position
+    if (currentJsonData.objects) {
+      currentJsonData.objects.forEach((obj, index) => {
+        if (obj.position) {
+          const oldPos = [...obj.position];
+          obj.position = obj.position.map(v => roundTo(v * ratio, 2));
+          console.log(`Object[${index}] position: [${oldPos}] → [${obj.position}]`);
+        }
+      });
+    }
+  } else if (dataFormat === 'level') {
+    // Level格式：更新beats和route的位置（不包括size，size由scaleUnitFactor控制）
+    console.log(`Level格式 - beats数量: ${currentJsonData.beats ? currentJsonData.beats.length : 0}`);
+    if (currentJsonData.beats) {
+      currentJsonData.beats.forEach((beat, index) => {
+        console.log(`处理 beat[${index}]:`, JSON.stringify(beat, null, 2));
+        if (beat.aabb_min) {
+          const oldMin = [...beat.aabb_min];
+          beat.aabb_min = beat.aabb_min.map(v => roundTo(v * ratio, 2));
+          console.log(`  aabb_min: [${oldMin}] → [${beat.aabb_min}]`);
+        }
+        if (beat.aabb_max) {
+          const oldMax = [...beat.aabb_max];
+          beat.aabb_max = beat.aabb_max.map(v => roundTo(v * ratio, 2));
+          console.log(`  aabb_max: [${oldMax}] → [${beat.aabb_max}]`);
+        }
+        // 注意：不更新size，size由scaleUnitFactor控制
+        if (beat.position) {
+          const oldPos = {...beat.position};
+          beat.position.x = roundTo(beat.position.x * ratio, 2);
+          beat.position.y = roundTo(beat.position.y * ratio, 2);
+          beat.position.z = roundTo(beat.position.z * ratio, 2);
+          console.log(`  position: ${JSON.stringify(oldPos)} → ${JSON.stringify(beat.position)}`);
+        }
+        if (beat.guideline_key_points) {
+          beat.guideline_key_points.forEach((pt, ptIndex) => {
+            const oldPt = {...pt};
+            pt.x = roundTo(pt.x * ratio, 2);
+            pt.y = roundTo(pt.y * ratio, 2);
+            pt.z = roundTo(pt.z * ratio, 2);
+            console.log(`  guideline[${ptIndex}]: ${JSON.stringify(oldPt)} → ${JSON.stringify(pt)}`);
+          });
+        }
+      });
+    }
+    if (currentJsonData.route) {
+      if (currentJsonData.route.spawn) {
+        const oldSpawn = {...currentJsonData.route.spawn};
+        currentJsonData.route.spawn.x = roundTo(currentJsonData.route.spawn.x * ratio, 2);
+        currentJsonData.route.spawn.y = roundTo(currentJsonData.route.spawn.y * ratio, 2);
+        currentJsonData.route.spawn.z = roundTo(currentJsonData.route.spawn.z * ratio, 2);
+        console.log(`Route spawn: ${JSON.stringify(oldSpawn)} → ${JSON.stringify(currentJsonData.route.spawn)}`);
+      }
+      if (currentJsonData.route.goal) {
+        const oldGoal = {...currentJsonData.route.goal};
+        currentJsonData.route.goal.x = roundTo(currentJsonData.route.goal.x * ratio, 2);
+        currentJsonData.route.goal.y = roundTo(currentJsonData.route.goal.y * ratio, 2);
+        currentJsonData.route.goal.z = roundTo(currentJsonData.route.goal.z * ratio, 2);
+        console.log(`Route goal: ${JSON.stringify(oldGoal)} → ${JSON.stringify(currentJsonData.route.goal)}`);
+      }
+      if (currentJsonData.route.key_points) {
+        currentJsonData.route.key_points.forEach((pt, index) => {
+          const oldPt = {...pt};
+          pt.x = roundTo(pt.x * ratio, 2);
+          pt.y = roundTo(pt.y * ratio, 2);
+          pt.z = roundTo(pt.z * ratio, 2);
+          console.log(`Route keypoint[${index}]: ${JSON.stringify(oldPt)} → ${JSON.stringify(pt)}`);
+        });
+      }
+    }
+  }
+  console.log(`%c=== 位置倍率更新完成 ===`, 'color: green; font-weight: bold');
+}
+
+// 更新尺寸相关字段（Scene和Level格式都需要）
+function updateJsonForScaleFactorChange(oldFactor, newFactor) {
+  if (!currentJsonData) return;
+  const ratio = newFactor / oldFactor;
+  const dataFormat = detectDataFormat(currentJsonData);
+  
+  console.log(`%c=== 更新尺寸倍率 ===`, 'color: purple; font-weight: bold');
+  console.log(`旧倍率: ${oldFactor} → 新倍率: ${newFactor}, 比例: ${ratio}`);
+  console.log(`数据格式: ${dataFormat}`);
+  
+  if (dataFormat === 'scene' && currentJsonData.objects) {
+    currentJsonData.objects.forEach((obj, index) => {
+      if (obj.scale) {
+        const oldScale = [...obj.scale];
+        obj.scale = obj.scale.map(v => roundTo(v * ratio, 3));
+        console.log(`Object[${index}] scale: [${oldScale}] → [${obj.scale}]`);
+      }
+    });
+  } else if (dataFormat === 'level' && currentJsonData.beats) {
+    console.log('Level格式：更新beats的size，并重新计算aabb_min/aabb_max');
+    currentJsonData.beats.forEach((beat, index) => {
+      if (beat.size) {
+        // 更新size
+        if (Array.isArray(beat.size)) {
+          const oldSize = [...beat.size];
+          beat.size = beat.size.map(v => roundTo(v * ratio, 2));
+          console.log(`  Beat[${index}] size: [${oldSize}] → [${beat.size}]`);
+          
+          // 重新计算aabb（假设position不变）
+          if (beat.position) {
+            const centerX = beat.position.x;
+            const centerY = beat.position.y;
+            const centerZ = beat.position.z;
+            beat.aabb_min = [
+              roundTo(centerX - beat.size[0] / 2, 2),
+              roundTo(centerY - beat.size[1] / 2, 2),
+              roundTo(centerZ - beat.size[2] / 2, 2)
+            ];
+            beat.aabb_max = [
+              roundTo(centerX + beat.size[0] / 2, 2),
+              roundTo(centerY + beat.size[1] / 2, 2),
+              roundTo(centerZ + beat.size[2] / 2, 2)
+            ];
+          } else if (beat.aabb_min && beat.aabb_max) {
+            // 如果没有position但有aabb，则从aabb计算中心点再重新计算aabb
+            const centerX = (beat.aabb_min[0] + beat.aabb_max[0]) / 2;
+            const centerY = (beat.aabb_min[1] + beat.aabb_max[1]) / 2;
+            const centerZ = (beat.aabb_min[2] + beat.aabb_max[2]) / 2;
+            beat.aabb_min = [
+              roundTo(centerX - beat.size[0] / 2, 2),
+              roundTo(centerY - beat.size[1] / 2, 2),
+              roundTo(centerZ - beat.size[2] / 2, 2)
+            ];
+            beat.aabb_max = [
+              roundTo(centerX + beat.size[0] / 2, 2),
+              roundTo(centerY + beat.size[1] / 2, 2),
+              roundTo(centerZ + beat.size[2] / 2, 2)
+            ];
+          }
+        } else {
+          const oldSize = {...beat.size};
+          beat.size.width = roundTo(beat.size.width * ratio, 2);
+          beat.size.height = roundTo(beat.size.height * ratio, 2);
+          beat.size.depth = roundTo(beat.size.depth * ratio, 2);
+          console.log(`  Beat[${index}] size: ${JSON.stringify(oldSize)} → ${JSON.stringify(beat.size)}`);
+          
+          // 重新计算aabb
+          if (beat.position) {
+            const centerX = beat.position.x;
+            const centerY = beat.position.y;
+            const centerZ = beat.position.z;
+            beat.aabb_min = [
+              roundTo(centerX - beat.size.width / 2, 2),
+              roundTo(centerY - beat.size.height / 2, 2),
+              roundTo(centerZ - beat.size.depth / 2, 2)
+            ];
+            beat.aabb_max = [
+              roundTo(centerX + beat.size.width / 2, 2),
+              roundTo(centerY + beat.size.height / 2, 2),
+              roundTo(centerZ + beat.size.depth / 2, 2)
+            ];
+          } else if (beat.aabb_min && beat.aabb_max) {
+            const centerX = (beat.aabb_min[0] + beat.aabb_max[0]) / 2;
+            const centerY = (beat.aabb_min[1] + beat.aabb_max[1]) / 2;
+            const centerZ = (beat.aabb_min[2] + beat.aabb_max[2]) / 2;
+            beat.aabb_min = [
+              roundTo(centerX - beat.size.width / 2, 2),
+              roundTo(centerY - beat.size.height / 2, 2),
+              roundTo(centerZ - beat.size.depth / 2, 2)
+            ];
+            beat.aabb_max = [
+              roundTo(centerX + beat.size.width / 2, 2),
+              roundTo(centerY + beat.size.height / 2, 2),
+              roundTo(centerZ + beat.size.depth / 2, 2)
+            ];
+          }
+        }
+      }
+    });
+  }
+  console.log(`%c=== 尺寸倍率更新完成 ===`, 'color: green; font-weight: bold');
+}
+
+// 更新旋转单位
+function updateJsonForRotationUnitChange(oldUnit, newUnit) {
+  if (!currentJsonData || oldUnit === newUnit) return;
+  const dataFormat = detectDataFormat(currentJsonData);
+  const ratio = (newUnit === 'rad') ? (Math.PI / 180) : (180 / Math.PI);
+  
+  console.log(`更新旋转单位: ${oldUnit} → ${newUnit}, 比例: ${ratio}`);
+  
+  // 更新camera.rotation
+  if (currentJsonData.camera && currentJsonData.camera.rotation) {
+    currentJsonData.camera.rotation = currentJsonData.camera.rotation.map(v => roundTo(v * ratio, 2));
+    console.log('Updated camera.rotation');
+  }
+  
+  if (dataFormat === 'scene' && currentJsonData.objects) {
+    currentJsonData.objects.forEach((obj, index) => {
+      if (obj.rotation) {
+        obj.rotation = obj.rotation.map(v => roundTo(v * ratio, 2));
+        console.log(`Updated object[${index}].rotation`);
+      }
+    });
+  }
+}
+
 // 已移除切换编辑模式逻辑，始终为编辑模式
 
 /******************************
@@ -2079,6 +2334,40 @@ function animate() {
   animationFrameId = requestAnimationFrame(animate);
   try {
     if (controls) controls.update();
+
+    // 实时同步相机位置和旋转到 currentJsonData（带节流）
+    const currentTime = Date.now();
+    if (currentJsonData && camera && currentTime - lastCameraUpdateTime > cameraUpdateInterval) {
+      if (currentJsonData.camera) {
+        // 更新位置（转换回JSON单位）
+        const newPosition = [
+          roundTo(camera.position.x / posUnitFactor, 2),
+          roundTo(camera.position.y / posUnitFactor, 2),
+          roundTo(camera.position.z / posUnitFactor, 2)
+        ];
+        
+        // 更新旋转（转换回JSON单位）
+        const newRotation = [
+          roundTo(rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(camera.rotation.x) : camera.rotation.x, 2),
+          roundTo(rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(camera.rotation.y) : camera.rotation.y, 2),
+          roundTo(rotationUnit === 'deg' ? THREE.MathUtils.radToDeg(camera.rotation.z) : camera.rotation.z, 2)
+        ];
+        
+        // 检查是否有变化再更新（避免不必要的更新）
+        const posChanged = !currentJsonData.camera.position || 
+          JSON.stringify(currentJsonData.camera.position) !== JSON.stringify(newPosition);
+        const rotChanged = !currentJsonData.camera.rotation || 
+          JSON.stringify(currentJsonData.camera.rotation) !== JSON.stringify(newRotation);
+        
+        if (posChanged || rotChanged) {
+          currentJsonData.camera.position = newPosition;
+          currentJsonData.camera.rotation = newRotation;
+          updateJsonTextarea();
+        }
+        
+        lastCameraUpdateTime = currentTime;
+      }
+    }
 
     // 更新深度预览材质的相机位置和深度范围
     if (depthPreviewMode && camera) {
@@ -2291,6 +2580,13 @@ function initUI(initialData) {
         fovInput.value = roundTo(newFOV, 1);
         camera.fov = newFOV;
         camera.updateProjectionMatrix();
+        
+        // 实时更新到 currentJsonData
+        if (currentJsonData && currentJsonData.camera) {
+          currentJsonData.camera.fov = roundTo(newFOV, 1);
+          updateJsonTextarea();
+        }
+        
         console.log(`焦距: ${focalLength}mm → FOV: ${roundTo(newFOV, 1)}°`);
       }
     };
@@ -2304,6 +2600,13 @@ function initUI(initialData) {
         focalLengthInput.value = focalLength;
         camera.fov = newFOV;
         camera.updateProjectionMatrix();
+        
+        // 实时更新到 currentJsonData
+        if (currentJsonData && currentJsonData.camera) {
+          currentJsonData.camera.fov = roundTo(newFOV, 1);
+          updateJsonTextarea();
+        }
+        
         console.log(`FOV: ${roundTo(newFOV, 1)}° → 焦距: ${focalLength}mm`);
       }
     };
@@ -2377,17 +2680,53 @@ function initUI(initialData) {
           const newUseRandom = randomColorCheckbox ? randomColorCheckbox.checked : true;
           const newCustomColor = colorPicker ? parseInt(colorPicker.value.replace('#',''),16) : customColor;
           if(!isNaN(newPosFactor) && newPosFactor>0 && !isNaN(newScaleFactor) && newScaleFactor>0){
+              // === 新增：在重建场景前先更新JSON数据 ===
+              console.log('Settings changed → updating JSON data');
+              
+              // 保存旧倍率值
+              const oldPosFactor = posUnitFactor;
+              const oldScaleFactor = scaleUnitFactor;
+              const oldRotUnit = rotationUnit;
+              
+              // 更新位置倍率
+              if (newPosFactor !== oldPosFactor) {
+                updateJsonForPositionFactorChange(oldPosFactor, newPosFactor);
+              }
+              
+              // 更新尺寸倍率
+              if (newScaleFactor !== oldScaleFactor) {
+                updateJsonForScaleFactorChange(oldScaleFactor, newScaleFactor);
+              }
+              
+              // 更新旋转单位
+              if (newRotUnit !== oldRotUnit) {
+                updateJsonForRotationUnitChange(oldRotUnit, newRotUnit);
+              }
+              
+              // 更新 JSON textarea 显示
+              updateJsonTextarea();
+              
+              // === 然后更新全局变量并重建场景 ===
               posUnitFactor = newPosFactor;
               scaleUnitFactor = newScaleFactor;
               rotationUnit = newRotUnit;
               useRandomColor = newUseRandom;
               customColor = newCustomColor;
               console.log('Settings changed → rebuild scene');
-              let currentData;
-              try { currentData = JSON.parse(document.getElementById('jsonTextarea').value);} catch(e){ currentData = defaultData; }
-              currentJsonData = JSON.parse(JSON.stringify(currentData)); // 更新当前JSON数据
-              initScene(currentJsonData);
-              initUI(currentJsonData);
+              
+              // 从已更新的 currentJsonData 重建场景（不再从textarea读取）
+              if (currentJsonData) {
+                initScene(currentJsonData);
+                initUI(currentJsonData);
+              } else {
+                // 降级方案：如果 currentJsonData 不存在，则从 textarea 读取
+                let currentData;
+                try { currentData = JSON.parse(document.getElementById('jsonTextarea').value);} catch(e){ currentData = defaultData; }
+                currentJsonData = JSON.parse(JSON.stringify(currentData));
+                initScene(currentJsonData);
+                initUI(currentJsonData);
+              }
+              
               // 更新TransformControls的移动步进
               if (typeof window.__updateTransformSnap === 'function') {
                   try { window.__updateTransformSnap(); } catch (e) { console.warn('updateTranslationSnap not available:', e); }
