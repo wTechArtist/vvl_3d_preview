@@ -209,6 +209,7 @@ let showPosition = false;
 let showRotation = false;
 let showScale = false;
 let showDistance = false;
+let nameDisplayMode = 'all'; // 名称显示模式：'all' 或 '-1' 到 '-10'
 
 // --- 深度预览模式 ---
 let depthPreviewMode = false;
@@ -2453,8 +2454,28 @@ function updateLabel(o) {
       // 原有的 object 标签
       if (showName) {
         const fullName = o.data.name || 'N/A';
-        const lastName = fullName.split(/[\s-]+/).filter(s => s.length > 0).pop() || fullName;
-        lines.push(lastName);
+        let displayName = fullName;
+        
+        // 根据 nameDisplayMode 决定显示内容
+        if (nameDisplayMode === 'all') {
+          displayName = fullName;
+        } else {
+          // 分割名称（按空格或连字符）
+          const nameParts = fullName.split(/[\s-]+/).filter(s => s.length > 0);
+          const index = parseInt(nameDisplayMode);
+          
+          if (nameParts.length > 0 && index < 0) {
+            // 取最后N个单词并用连字符连接
+            const count = Math.abs(index);
+            if (count >= nameParts.length) {
+              displayName = fullName; // 数量超出范围，显示全部
+            } else {
+              displayName = nameParts.slice(-count).join('-');
+            }
+          }
+        }
+        
+        lines.push(displayName);
       }
       if (showPosition) {
         lines.push(`position(cm): [${(o.data.position || [0,0,0]).join(', ')}]`);
@@ -2552,6 +2573,8 @@ function initUI(initialData) {
   const labelRotCb = document.getElementById('labelRotCb');
   const labelScaleCb = document.getElementById('labelScaleCb');
   const labelDistCb = document.getElementById('labelDistCb');
+  const nameDisplayModeSelect = document.getElementById('nameDisplayMode');
+  const nameSubOption = document.getElementById('nameSubOption');
 
   if(posUnitInput) posUnitInput.value = posUnitFactor;
   if(scaleUnitInput) scaleUnitInput.value = (scaleUnitFactor/100).toFixed(2).replace(/\.00$/, '');
@@ -2657,6 +2680,12 @@ function initUI(initialData) {
       showRotation = labelRotCb ? labelRotCb.checked : showRotation;
       showScale = labelScaleCb ? labelScaleCb.checked : showScale;
       showDistance = labelDistCb ? labelDistCb.checked : showDistance;
+      
+      // 控制子选项的显示/隐藏
+      if (nameSubOption) {
+        nameSubOption.style.display = showName ? 'block' : 'none';
+      }
+      
       objectsWithLabels.forEach(updateLabel);
   }
   if(labelPosCb) labelPosCb.onchange = refreshLabelFlags;
@@ -2664,6 +2693,20 @@ function initUI(initialData) {
   if(labelScaleCb) labelScaleCb.onchange = refreshLabelFlags;
   if(labelDistCb) labelDistCb.onchange = refreshLabelFlags;
   if(labelNameCb) labelNameCb.onchange = refreshLabelFlags;
+  
+  // 名称显示模式下拉框事件
+  if(nameDisplayModeSelect) {
+    nameDisplayModeSelect.value = nameDisplayMode;
+    nameDisplayModeSelect.onchange = () => {
+      nameDisplayMode = nameDisplayModeSelect.value;
+      objectsWithLabels.forEach(updateLabel);
+    };
+  }
+  
+  // 初始化时设置子选项的显示状态
+  if (nameSubOption) {
+    nameSubOption.style.display = showName ? 'block' : 'none';
+  }
   }
 
   if(posUnitInput && scaleUnitInput && rotUnitSelect){
